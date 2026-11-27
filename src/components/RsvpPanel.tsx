@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, HelpCircle, Minus, Plus, Save, Users, XCircle } from 'lucide-react';
 import type { Participant, RsvpEntry, RsvpStatus } from '../../shared/types';
+import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 interface RsvpPanelProps {
@@ -18,6 +19,7 @@ export function RsvpPanel({
   onSaveRsvp,
   onRequireIdentity,
 }: RsvpPanelProps) {
+  const { t } = useI18n();
   const myRsvp = me ? rsvps.find((r) => r.participantId === me.id) : undefined;
   const [status, setStatus] = useState<RsvpStatus>(myRsvp?.status ?? 'going');
   const [guestsCount, setGuestsCount] = useState<number>(myRsvp?.guestsCount ?? 0);
@@ -74,12 +76,12 @@ export function RsvpPanel({
         <div className="flex items-center gap-2">
           <Users className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
           <h3 className="font-display text-sm sm:text-base font-extrabold tracking-tight">
-            Confirmación final de asistencia (RSVP)
+            {t.rsvp.title}
           </h3>
         </div>
         <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/70 px-3 py-1 text-xs font-extrabold text-emerald-800 dark:text-emerald-200 tabular-nums">
-          {totalHeadcount} {totalHeadcount === 1 ? 'confirmado' : 'confirmados'}
-          {extraGuestsTotal > 0 ? ` (incl. +${extraGuestsTotal})` : ''}
+          {t.common.confirmedCount(totalHeadcount)}
+          {extraGuestsTotal > 0 ? t.rsvp.extraGuests(extraGuestsTotal) : ''}
         </span>
       </div>
 
@@ -90,19 +92,19 @@ export function RsvpPanel({
             [
               {
                 id: 'going' as const,
-                label: '¡Voy seguro!',
+                label: t.rsvp.going,
                 icon: CheckCircle2,
                 active: 'border-emerald-600 bg-emerald-600 text-white',
               },
               {
                 id: 'maybe' as const,
-                label: 'Aún duda',
+                label: t.rsvp.maybe,
                 icon: HelpCircle,
                 active: 'border-amber-500 bg-amber-500 text-white',
               },
               {
                 id: 'not_going' as const,
-                label: 'No puedo ir',
+                label: t.rsvp.notGoing,
                 icon: XCircle,
                 active: 'border-rose-500 bg-rose-500 text-white',
               },
@@ -132,7 +134,9 @@ export function RsvpPanel({
         <form onSubmit={handleSaveDetails} className="flex flex-wrap items-center gap-2">
           {status === 'going' && (
             <div className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs">
-              <span className="text-stone-500 dark:text-slate-400 font-medium">Acompañantes:</span>
+              <span className="text-stone-500 dark:text-slate-400 font-medium">
+                {t.rsvp.guestsLabel}
+              </span>
               <button
                 type="button"
                 onClick={() => setGuestsCount((g) => Math.max(0, g - 1))}
@@ -156,7 +160,7 @@ export function RsvpPanel({
             maxLength={160}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Nota (ej: llego 15 min tarde, sin gluten...)"
+            placeholder={t.rsvp.notePlaceholder}
             className="flex-1 min-w-[180px] rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-teal-500"
           />
 
@@ -166,7 +170,7 @@ export function RsvpPanel({
             className="inline-flex items-center gap-1 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 px-3 py-1.5 text-xs font-bold text-white cursor-pointer"
           >
             <Save className="h-3.5 w-3.5" />
-            Guardar
+            {t.common.save}
           </button>
         </form>
       </div>

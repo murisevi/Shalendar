@@ -1,5 +1,5 @@
-import type { Participant, Plan, RsvpEntry } from '../../shared/types';
-import { formatDateLongEs, formatDateRangeEs } from '../../shared/dates';
+import type { Language, Participant, Plan, RsvpEntry } from '../../shared/types';
+import { formatDateLong, formatDateRange } from '../../shared/dates';
 
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
@@ -53,8 +53,10 @@ export async function generateInviteCardBlob(params: {
   participants: Participant[];
   rsvps: RsvpEntry[];
   shareUrl: string;
+  lang?: Language;
 }): Promise<Blob> {
-  const { plan, participants, rsvps, shareUrl } = params;
+  const { plan, participants, rsvps, shareUrl, lang = 'es' } = params;
+  const isEn = lang === 'en';
   const W = 1080;
   const H = 720;
   const canvas = document.createElement('canvas');
@@ -107,7 +109,17 @@ export async function generateInviteCardBlob(params: {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = isConfirmed ? '#92400e' : '#0f766e';
-  ctx.fillText(isConfirmed ? '★  ¡FECHA CONFIRMADA!' : '📅  PLAN EN MARCHA', 238, 132);
+  ctx.fillText(
+    isConfirmed
+      ? isEn
+        ? '★  DATE CONFIRMED!'
+        : '★  ¡FECHA CONFIRMADA!'
+      : isEn
+        ? '📅  PLAN IN PROGRESS'
+        : '📅  PLAN EN MARCHA',
+    238,
+    132
+  );
 
   // Title
   ctx.fillStyle = '#18181b';
@@ -128,8 +140,10 @@ export async function generateInviteCardBlob(params: {
   ctx.stroke();
 
   const dateText = plan.confirmedDate
-    ? `${plan.confirmedEndDate ? formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate) : formatDateLongEs(plan.confirmedDate)}${plan.confirmedTime ? ` · ${plan.confirmedTime}` : ''}`
-    : 'Fecha por decidir · ¡Entra y vota!';
+    ? `${plan.confirmedEndDate ? formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang) : formatDateLong(plan.confirmedDate, lang)}${plan.confirmedTime ? ` · ${plan.confirmedTime}` : ''}`
+    : isEn
+      ? 'Date TBD · Jump in and vote!'
+      : 'Fecha por decidir · ¡Entra y vota!';
 
   ctx.fillStyle = '#0f766e';
   ctx.font = '800 32px "Plus Jakarta Sans", system-ui, sans-serif';
@@ -137,14 +151,21 @@ export async function generateInviteCardBlob(params: {
 
   ctx.fillStyle = '#57534e';
   ctx.font = '600 24px "Inter", system-ui, sans-serif';
-  const locText = plan.location ? `📍  ${plan.location}` : '📍  Lugar por concretar en Shalendar';
+  const locText = plan.location
+    ? `📍  ${plan.location}`
+    : isEn
+      ? '📍  Location TBD on Shalendar'
+      : '📍  Lugar por concretar en Shalendar';
   ctx.fillText(locText.slice(0, 58), 136, boxY + 92);
 
   // Headcount line
   const goingRsvps = rsvps.filter((r) => r.status === 'going');
   const totalGoing = goingRsvps.reduce((sum, r) => sum + 1 + r.guestsCount, 0);
-  const peopleLine =
-    totalGoing > 0
+  const peopleLine = isEn
+    ? totalGoing > 0
+      ? `👥  ${totalGoing} confirmed · ${participants.length} in the group`
+      : `👥  ${participants.length} ${participants.length === 1 ? 'friend joined' : 'friends joined'}`
+    : totalGoing > 0
       ? `👥  ${totalGoing} ${totalGoing === 1 ? 'confirmado' : 'confirmados'} · ${participants.length} en el grupo`
       : `👥  ${participants.length} ${participants.length === 1 ? 'amigo apuntado' : 'amigos apuntados'}`;
   ctx.fillStyle = '#059669';
@@ -195,7 +216,7 @@ export async function generateInviteCardBlob(params: {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
-      else reject(new Error('No se pudo generar la tarjeta PNG'));
+      else reject(new Error(isEn ? 'Could not generate PNG card' : 'No se pudo generar la tarjeta PNG'));
     }, 'image/png');
   });
 }
@@ -205,9 +226,11 @@ export async function downloadOrShareInviteCard(params: {
   participants: Participant[];
   rsvps: RsvpEntry[];
   shareUrl: string;
+  lang?: Language;
 }): Promise<'shared' | 'downloaded'> {
+  const isEn = params.lang === 'en';
   const blob = await generateInviteCardBlob(params);
-  const fileName = `${params.plan.slug}-invitacion.png`;
+  const fileName = `${params.plan.slug}-${isEn ? 'invite' : 'invitacion'}.png`;
   const file = new File([blob], fileName, { type: 'image/png' });
 
   if (
@@ -218,7 +241,7 @@ export async function downloadOrShareInviteCard(params: {
     try {
       await navigator.share({
         title: `${params.plan.emoji} ${params.plan.title}`,
-        text: `Detalles de la quedada: ${params.shareUrl}`,
+        text: isEn ? `Plan details: ${params.shareUrl}` : `Detalles de la quedada: ${params.shareUrl}`,
         files: [file],
       });
       return 'shared';

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Eye, KeyRound, LogOut, MapPin, Save, UserPlus, X } from 'lucide-react';
 import type { Participant, Plan } from '../../shared/types';
 import { AVATAR_COLORS, AVATAR_EMOJIS } from '../../shared/dates';
+import { useI18n } from '../lib/i18n';
 
 interface IdentityModalProps {
   open: boolean;
@@ -33,6 +34,7 @@ export function IdentityModal({
   onUpdateProfile,
   onLeavePlan,
 }: IdentityModalProps) {
+  const { t } = useI18n();
   const [subTab, setSubTab] = useState<'new' | 'recover'>('new');
   const [name, setName] = useState('');
   const [color, setColor] = useState(AVATAR_COLORS[participantCount % AVATAR_COLORS.length]);
@@ -65,11 +67,11 @@ export function IdentityModal({
 
     if (mode === 'edit' && onUpdateProfile) {
       if (!name.trim()) {
-        setError('Escribe tu nombre.');
+        setError(t.identity.errWriteName);
         return;
       }
       if (pin.trim() && pin.trim().length < 4) {
-        setError('El PIN debe tener al menos 4 caracteres.');
+        setError(t.identity.errPinLength);
         return;
       }
       setLoading(true);
@@ -82,7 +84,7 @@ export function IdentityModal({
         });
         onClose();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo actualizar el perfil');
+        setError(err instanceof Error ? err.message : t.identity.errUpdateFailed);
       } finally {
         setLoading(false);
       }
@@ -91,7 +93,7 @@ export function IdentityModal({
 
     if (subTab === 'recover') {
       if (!name.trim() || pin.trim().length < 4) {
-        setError('Introduce tu nombre y tu PIN (mínimo 4 caracteres).');
+        setError(t.identity.errRecoverInput);
         return;
       }
       setLoading(true);
@@ -99,7 +101,7 @@ export function IdentityModal({
         await onClaimExisting(name.trim(), pin.trim());
         onClose();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo recuperar el perfil');
+        setError(err instanceof Error ? err.message : t.identity.errRecoverFailed);
       } finally {
         setLoading(false);
       }
@@ -107,11 +109,11 @@ export function IdentityModal({
     }
 
     if (!name.trim()) {
-      setError('Introduce tu nombre para participar.');
+      setError(t.identity.errJoinName);
       return;
     }
     if (pin.trim() && pin.trim().length < 4) {
-      setError('El PIN opcional debe tener al menos 4 caracteres.');
+      setError(t.identity.errOptionalPin);
       return;
     }
 
@@ -120,7 +122,7 @@ export function IdentityModal({
       await onJoinNew(name.trim(), color, emoji, pin.trim() || undefined);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo entrar');
+      setError(err instanceof Error ? err.message : t.identity.errJoinFailed);
     } finally {
       setLoading(false);
     }
@@ -143,7 +145,7 @@ export function IdentityModal({
               </span>
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-300">
-                  Te han invitado a esta quedada
+                  {t.identity.invitedEyebrow}
                 </p>
                 <h2 className="font-display text-base font-extrabold tracking-tight text-stone-900 dark:text-white truncate">
                   {plan.title}
@@ -159,10 +161,10 @@ export function IdentityModal({
           ) : (
             <div>
               <h2 className="font-display text-xl font-extrabold tracking-tight">
-                Tu perfil en esta quedada
+                {t.identity.editTitle}
               </h2>
               <p className="text-xs text-stone-500 dark:text-slate-400">
-                Cambia tu nombre, icono o configura un PIN para entrar desde otro dispositivo.
+                {t.identity.editSubtitle}
               </p>
             </div>
           )}
@@ -170,7 +172,7 @@ export function IdentityModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cerrar"
+            aria-label={t.common.close}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-stone-100 dark:hover:bg-slate-800 text-stone-500 cursor-pointer"
           >
             <X className="h-4 w-4" />
@@ -192,7 +194,7 @@ export function IdentityModal({
                   : 'text-stone-500 dark:text-slate-400'
               }`}
             >
-              Soy nuevo aquí
+              {t.identity.tabNew}
             </button>
             <button
               type="button"
@@ -206,7 +208,7 @@ export function IdentityModal({
                   : 'text-stone-500 dark:text-slate-400'
               }`}
             >
-              Ya entré en otro móvil
+              {t.identity.tabRecover}
             </button>
           </div>
         )}
@@ -215,8 +217,7 @@ export function IdentityModal({
           {subTab === 'recover' && mode === 'join' ? (
             <div className="space-y-3">
               <p className="text-xs text-stone-500 dark:text-slate-400">
-                Introduce el mismo nombre y el PIN que pusiste al apuntarte para recuperar tu
-                sesión.
+                {t.identity.recoverDesc}
               </p>
               <input
                 type="text"
@@ -225,7 +226,7 @@ export function IdentityModal({
                 maxLength={32}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Tu nombre exacto (ej: Pablo)"
+                placeholder={t.identity.recoverNamePlaceholder}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500"
               />
               <input
@@ -235,7 +236,7 @@ export function IdentityModal({
                 maxLength={12}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                placeholder="Tu PIN de recuperación"
+                placeholder={t.identity.recoverPinPlaceholder}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500"
               />
             </div>
@@ -255,7 +256,7 @@ export function IdentityModal({
                   maxLength={32}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Tu nombre (ej: Pablo)"
+                  placeholder={t.identity.namePlaceholder}
                   className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-3 focus:ring-teal-500/15"
                 />
               </div>
@@ -268,7 +269,7 @@ export function IdentityModal({
                       type="button"
                       onClick={() => setColor(c)}
                       style={{ backgroundColor: c }}
-                      aria-label={`Color ${c}`}
+                      aria-label={t.identity.colorAria(c)}
                       className={`h-6 w-6 rounded-full transition cursor-pointer ${
                         color === c
                           ? 'ring-2 ring-offset-2 ring-stone-900 dark:ring-white dark:ring-offset-slate-900 scale-110'
@@ -299,9 +300,10 @@ export function IdentityModal({
                 <label className="flex items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-slate-300 mb-1">
                   <KeyRound className="h-3.5 w-3.5 text-teal-600" />
                   <span>
-                    PIN multi-dispositivo{' '}
+                    {t.identity.pinLabel}{' '}
                     <span className="text-stone-400 font-normal">
-                      (opcional{currentParticipant?.hasPin ? ' · ya configurado' : ''})
+                      ({t.common.optional}
+                      {currentParticipant?.hasPin ? ` · ${t.identity.pinAlreadySet}` : ''})
                     </span>
                   </span>
                 </label>
@@ -311,7 +313,7 @@ export function IdentityModal({
                   maxLength={12}
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
-                  placeholder="4+ dígitos para recuperar tu perfil desde otro móvil"
+                  placeholder={t.identity.pinPlaceholder}
                   className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3 py-2 text-xs outline-none focus:border-teal-500"
                 />
               </div>
@@ -332,17 +334,17 @@ export function IdentityModal({
             {mode === 'edit' ? (
               <>
                 <Save className="h-4 w-4" />
-                {loading ? 'Guardando...' : 'Guardar cambios'}
+                {loading ? t.common.saving : t.identity.saveChangesBtn}
               </>
             ) : subTab === 'recover' ? (
               <>
                 <KeyRound className="h-4 w-4" />
-                {loading ? 'Verificando...' : 'Recuperar mi sesión'}
+                {loading ? t.identity.verifyingBtn : t.identity.recoverSessionBtn}
               </>
             ) : (
               <>
                 <UserPlus className="h-4 w-4" />
-                {loading ? 'Entrando...' : 'Entrar y participar'}
+                {loading ? t.identity.joiningBtn : t.identity.joinBtn}
               </>
             )}
           </button>
@@ -354,7 +356,7 @@ export function IdentityModal({
               className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-stone-200 dark:border-slate-700 hover:bg-stone-50 dark:hover:bg-slate-800 py-2.5 text-xs font-semibold text-stone-600 dark:text-slate-300 transition cursor-pointer"
             >
               <Eye className="h-3.5 w-3.5" />
-              Solo echar un vistazo primero
+              {t.identity.justBrowseBtn}
             </button>
           )}
 
@@ -362,7 +364,7 @@ export function IdentityModal({
             <button
               type="button"
               onClick={async () => {
-                if (!window.confirm('¿Seguro que quieres salir y borrar tus respuestas de esta quedada?')) {
+                if (!window.confirm(t.identity.leaveConfirm)) {
                   return;
                 }
                 setLoading(true);
@@ -376,7 +378,7 @@ export function IdentityModal({
               className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/60 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 transition cursor-pointer"
             >
               <LogOut className="h-3.5 w-3.5" />
-              Salir de esta quedada
+              {t.identity.leaveBtn}
             </button>
           )}
         </form>

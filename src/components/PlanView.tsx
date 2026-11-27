@@ -35,7 +35,7 @@ import {
   buildIcsContent,
   computeDaySummaries,
   formatDateISO,
-  formatDateRangeEs,
+  formatDateRange,
   isVotingEffectivelyOpen,
   rankBestDates,
   rankBestRanges,
@@ -54,7 +54,9 @@ import {
   type ThemeMode,
 } from '../lib/storage';
 import { downloadOrShareInviteCard } from '../lib/inviteCard';
+import { useI18n } from '../lib/i18n';
 import { Avatar, AvatarStack } from './Avatar';
+import { LanguageSelector } from './LanguageSelector';
 import { InteractiveCalendar } from './InteractiveCalendar';
 import { VotingPanel } from './VotingPanel';
 import { ComparisonMatrix } from './ComparisonMatrix';
@@ -75,6 +77,7 @@ interface PlanViewProps {
 }
 
 export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps) {
+  const { language, t } = useI18n();
   const [snapshot, setSnapshot] = useState<PlanSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -108,6 +111,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   >([]);
   const snapshotRef = useRef<PlanSnapshot | null>(null);
   snapshotRef.current = snapshot;
+  const tRef = useRef(t);
+  tRef.current = t;
 
   const showToast = useCallback((text: string, tone: 'ok' | 'err' = 'ok') => {
     setToast({ text, tone });
@@ -115,6 +120,14 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       setToast((prev) => (prev?.text === text ? null : prev));
     }, 3200);
   }, []);
+
+  useEffect(() => {
+    if (snapshot?.plan) {
+      document.title = `${snapshot.plan.emoji} ${snapshot.plan.title} — Shalendar`;
+    } else if (notFound) {
+      document.title = `${t.plan.notFoundTitle} — Shalendar`;
+    }
+  }, [snapshot?.plan, notFound, t.plan.notFoundTitle]);
 
   // Load initial snapshot + handle cross-device magic tokens (?pt=...&at=...) + SSE (skipInitial=1)
   useEffect(() => {
@@ -149,7 +162,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
             if (session.participant) {
               saveParticipantId(slug, session.participant.id);
               setMyParticipantId(session.participant.id);
-              if (pt) showToast(`Sesión restaurada como ${session.participant.name}`);
+              if (pt) showToast(tRef.current.plan.toasts.sessionRestored(session.participant.name));
             }
             setIsAdmin(session.isAdmin || slug === 'cena-reencuentro');
           }
@@ -343,7 +356,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     setMyParticipantId(res.participant.id);
     saveParticipantId(slug, res.participant.id);
     saveParticipantToken(slug, res.participantToken);
-    showToast(`¡Hola ${res.participant.name}! Ya puedes pintar tus días y votar.`);
+    showToast(t.plan.toasts.welcomeNew(res.participant.name));
   }
 
   async function handleClaimExisting(name: string, pin: string) {
@@ -352,7 +365,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     setMyParticipantId(res.participant.id);
     saveParticipantId(slug, res.participant.id);
     saveParticipantToken(slug, res.participantToken);
-    showToast(`¡Bienvenido de vuelta, ${res.participant.name}!`);
+    showToast(t.plan.toasts.welcomeBack(res.participant.name));
   }
 
   async function handleUpdateProfile(updates: {
@@ -364,7 +377,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     if (!me) return;
     const res = await api.updateParticipant(slug, me.id, updates);
     setSnapshot(res.snapshot);
-    showToast('Perfil actualizado');
+    showToast(t.plan.toasts.profileUpdated);
   }
 
   async function handleLeavePlan() {
@@ -374,7 +387,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     saveParticipantId(slug, null);
     saveParticipantToken(slug, null);
     setMyParticipantId(null);
-    showToast('Has salido de la quedada');
+    showToast(t.plan.toasts.leftPlan);
   }
 
   const handleCommitAvailability = useCallback(
@@ -447,9 +460,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         });
         setSnapshot(res.snapshot);
       } catch (err) {
-        // Optimistic rollback on network/auth failure
         if (prevSnap) setSnapshot(prevSnap);
-        showToast(err instanceof Error ? err.message : 'Error al guardar disponibilidad', 'err');
+        showToast(err instanceof Error ? err.message : tRef.current.plan.toasts.saveAvailabilityErr, 'err');
       }
     },
     [me, slug, showToast]
@@ -460,7 +472,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
       handleCommitAvailability(last, false);
-      showToast('Cambio deshecho');
+      showToast(tRef.current.plan.toasts.undone);
       return prev.slice(0, -1);
     });
   }, [handleCommitAvailability, showToast]);
@@ -476,9 +488,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         date,
       });
       setSnapshot(res.snapshot);
-      showToast(res.voted ? '★ Voto registrado' : 'Voto retirado');
+      showToast(res.voted ? t.plan.toasts.voteAdded : t.plan.toasts.voteRemoved);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo votar', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.voteErr, 'err');
     }
   }
 
@@ -490,9 +502,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         label,
       });
       setSnapshot(res.snapshot);
-      showToast('Día añadido a la votación');
+      showToast(t.plan.toasts.dayAddedToPoll);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al proponer día', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.proposeDayErr, 'err');
     }
   }
 
@@ -500,9 +512,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     try {
       const res = await api.removePollOption(slug, date);
       setSnapshot(res.snapshot);
-      showToast('Opción retirada de la votación');
+      showToast(t.plan.toasts.pollOptionRemoved);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo eliminar', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.deleteErr, 'err');
     }
   }
 
@@ -522,11 +534,11 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       setSnapshot(res.snapshot);
       showToast(
         date
-          ? `🎉 ¡Fecha confirmada: ${formatDateRangeEs(date, opts?.endDate)}!`
-          : 'Fecha reabierta'
+          ? t.plan.toasts.dateConfirmed(formatDateRange(date, opts?.endDate, language))
+          : t.plan.toasts.dateReopened
       );
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo confirmar', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.confirmErr, 'err');
     }
   }
 
@@ -537,9 +549,11 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         votingOpen: !snapshot.plan.votingOpen,
       });
       setSnapshot(res.snapshot);
-      showToast(res.snapshot.plan.votingOpen ? 'Votación reabierta' : 'Votación cerrada');
+      showToast(
+        res.snapshot.plan.votingOpen ? t.plan.toasts.votingReopened : t.plan.toasts.votingClosed
+      );
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al actualizar votación', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.votingUpdateErr, 'err');
     }
   }
 
@@ -552,9 +566,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         title: res.snapshot.plan.title,
         emoji: res.snapshot.plan.emoji,
       });
-      showToast('Ajustes guardados');
+      showToast(t.plan.toasts.settingsSaved);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo guardar', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
       throw err;
     }
   }
@@ -563,9 +577,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     try {
       const res = await api.removeParticipant(slug, participantId);
       setSnapshot(res.snapshot);
-      showToast('Participante eliminado');
+      showToast(t.plan.toasts.participantRemoved);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo eliminar', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.deleteErr, 'err');
     }
   }
 
@@ -575,7 +589,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       forgetPlan(slug);
       onGoHome();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo eliminar la quedada', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.deletePlanErr, 'err');
     }
   }
 
@@ -592,7 +606,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       });
       setSnapshot(res.snapshot);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al enviar nota', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.commentErr, 'err');
     }
   }
 
@@ -606,9 +620,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         note,
       });
       setSnapshot(res.snapshot);
-      showToast('Asistencia actualizada');
+      showToast(t.plan.toasts.rsvpUpdated);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al guardar RSVP', 'err');
+      showToast(err instanceof Error ? err.message : t.plan.toasts.rsvpErr, 'err');
     }
   }
 
@@ -624,6 +638,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       durationMinutes: snapshot.plan.confirmedDurationMinutes,
       timezone: snapshot.plan.confirmedTimezone,
       url: window.location.href,
+      lang: language,
     });
     const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -634,7 +649,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast('Archivo .ics descargado');
+    showToast(t.plan.toasts.icsDownloaded);
   }
 
   function handleToggleFilter(id: string) {
@@ -648,7 +663,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       <div className="min-h-screen flex items-center justify-center bg-[#FAF9F6] dark:bg-[#0E1318]">
         <div className="flex flex-col items-center gap-3 text-stone-500 dark:text-slate-400">
           <RefreshCw className="h-7 w-7 animate-spin text-teal-600" />
-          <p className="text-sm font-medium">Cargando calendario...</p>
+          <p className="text-sm font-medium">{t.plan.loading}</p>
         </div>
       </div>
     );
@@ -656,15 +671,25 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
 
   if (notFound || !snapshot) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#FAF9F6] dark:bg-[#0E1318] p-4">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAF9F6] dark:bg-[#0E1318] p-4 gap-4">
+        <div className="flex items-center gap-2">
+          <LanguageSelector variant="rounded" />
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={t.common.changeTheme}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-700 transition cursor-pointer"
+          >
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        </div>
         <div className="max-w-md rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center space-y-4 shadow-lg">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-stone-100 dark:bg-slate-800 text-3xl">
             🗺️
           </div>
-          <h1 className="font-display text-2xl font-extrabold">Quedada no encontrada</h1>
+          <h1 className="font-display text-2xl font-extrabold">{t.plan.notFoundTitle}</h1>
           <p className="text-sm text-stone-500 dark:text-slate-400">
-            El enlace puede haber cambiado o no existir todavía. Puedes crear un nuevo calendario en
-            segundos.
+            {t.plan.notFoundDesc}
           </p>
           <button
             type="button"
@@ -672,7 +697,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
             className="inline-flex items-center gap-2 rounded-xl bg-teal-600 hover:bg-teal-700 px-5 py-2.5 text-sm font-bold text-white transition cursor-pointer"
           >
             <ArrowLeft className="h-4 w-4" />
-            Volver al inicio
+            {t.plan.backHome}
           </button>
         </div>
       </div>
@@ -706,7 +731,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
             <button
               type="button"
               onClick={onGoHome}
-              title="Inicio"
+              title={t.plan.homeTitleTooltip}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 text-white shadow-xs hover:brightness-110 transition cursor-pointer"
             >
               <CalendarHeart className="h-5 w-5" />
@@ -734,9 +759,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                   />
                   {liveConnected
                     ? onlineSet.size > 1
-                      ? `En vivo · ${onlineSet.size} conectados`
-                      : 'En vivo'
-                    : 'Sincronizando'}
+                      ? t.plan.liveOnline(onlineSet.size)
+                      : t.plan.live
+                    : t.plan.syncing}
                 </span>
               </div>
             </div>
@@ -754,7 +779,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               <button
                 type="button"
                 onClick={() => setSettingsModalOpen(true)}
-                title="Ajustes del organizador"
+                title={t.plan.organizerSettingsTitle}
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-700 transition cursor-pointer"
               >
                 <Settings className="h-4 w-4" />
@@ -767,13 +792,15 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 px-3.5 py-2 text-xs sm:text-sm font-bold text-white shadow-xs shadow-teal-600/20 transition cursor-pointer"
             >
               <Share2 className="h-4 w-4" />
-              <span className="hidden sm:inline">Compartir</span>
+              <span className="hidden sm:inline">{t.plan.shareBtn}</span>
             </button>
+
+            <LanguageSelector variant="rounded" />
 
             <button
               type="button"
               onClick={onToggleTheme}
-              aria-label="Cambiar tema"
+              aria-label={t.common.changeTheme}
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-700 transition cursor-pointer"
             >
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -799,10 +826,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                 </div>
                 <div>
                   <p className="text-xs font-extrabold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-                    ¡Fecha definitiva confirmada!
+                    {t.plan.confirmedBadge}
                   </p>
                   <p className="font-display text-lg sm:text-xl font-extrabold text-stone-900 dark:text-white">
-                    {formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate)}
+                    {formatDateRange(plan.confirmedDate, plan.confirmedEndDate, language)}
                     {plan.confirmedTime ? ` · ${plan.confirmedTime}` : ''}
                   </p>
                 </div>
@@ -825,7 +852,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                   className="inline-flex items-center gap-1.5 rounded-xl bg-white dark:bg-slate-900 border border-stone-200 dark:border-slate-700 hover:border-teal-400 px-3 py-2 text-xs font-bold shadow-2xs transition"
                 >
                   <CalendarPlus className="h-3.5 w-3.5 text-teal-600" />
-                  Google Calendar
+                  {t.plan.googleCalendar}
                 </a>
                 <button
                   type="button"
@@ -833,7 +860,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                   className="inline-flex items-center gap-1.5 rounded-xl bg-white dark:bg-slate-900 border border-stone-200 dark:border-slate-700 hover:border-teal-400 px-3 py-2 text-xs font-bold shadow-2xs transition cursor-pointer"
                 >
                   <Download className="h-3.5 w-3.5 text-teal-600" />
-                  .ics
+                  {t.plan.icsBtn}
                 </button>
                 <button
                   type="button"
@@ -844,16 +871,17 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                         participants,
                         rsvps,
                         shareUrl: window.location.href,
+                        lang: language,
                       });
-                      showToast('Tarjeta de invitación PNG lista');
+                      showToast(t.plan.toasts.pngReady);
                     } catch {
-                      showToast('Error al generar tarjeta PNG', 'err');
+                      showToast(t.plan.toasts.pngErr, 'err');
                     }
                   }}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-white dark:bg-slate-900 border border-stone-200 dark:border-slate-700 hover:border-teal-400 px-3 py-2 text-xs font-bold shadow-2xs transition cursor-pointer"
                 >
                   <ImageDown className="h-3.5 w-3.5 text-teal-600" />
-                  Tarjeta PNG
+                  {t.plan.pngCardBtn}
                 </button>
                 {isAdmin && (
                   <button
@@ -861,7 +889,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                     onClick={() => handleConfirmDate(null, null)}
                     className="rounded-xl px-2.5 py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 dark:hover:text-slate-200 transition cursor-pointer"
                   >
-                    Cambiar fecha
+                    {t.plan.changeDateBtn}
                   </button>
                 )}
               </div>
@@ -885,14 +913,14 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-display text-sm font-bold">
-                    Participando como {me.name}
+                    {t.plan.participatingAs(me.name)}
                   </span>
                   <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/70 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">
-                    {myStats.yes} sí{myStats.maybe > 0 ? ` · ${myStats.maybe} quizá` : ''}
+                    {t.plan.myStatsYes(myStats.yes, myStats.maybe)}
                   </span>
                 </div>
                 <p className="text-xs text-stone-500 dark:text-slate-400">
-                  Tus cambios se guardan al instante y tus amigos los ven en directo.
+                  {t.plan.liveChangesHint}
                 </p>
               </div>
             </div>
@@ -903,14 +931,13 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 dark:border-slate-700 hover:bg-stone-50 dark:hover:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-stone-600 dark:text-slate-300 transition cursor-pointer"
             >
               <Pencil className="h-3.5 w-3.5" />
-              Mi perfil / PIN
+              {t.plan.myProfilePin}
             </button>
           </div>
         ) : (
           <div className="rounded-2xl border border-teal-200/90 dark:border-teal-800/60 bg-gradient-to-r from-teal-50/90 to-emerald-50/70 dark:from-teal-950/40 dark:to-emerald-950/30 px-4 py-3 shadow-2xs flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs sm:text-sm text-teal-950 dark:text-teal-100">
-              <strong>Modo vista previa:</strong> estás viendo la disponibilidad del grupo. Entra
-              con tu nombre para pintar tus días, votar y apuntarte.
+              <strong>{t.plan.previewModeStrong}</strong> {t.plan.previewModeText}
             </div>
             <button
               type="button"
@@ -918,7 +945,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer shrink-0"
             >
               <UserPlus className="h-3.5 w-3.5" />
-              Entrar con mi nombre
+              {t.plan.joinWithName}
             </button>
           </div>
         )}
@@ -928,10 +955,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           <div className="inline-flex rounded-2xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 shadow-2xs">
             {(
               [
-                { id: 'calendar', label: 'Calendario', icon: Calendar },
+                { id: 'calendar', label: t.plan.tabs.calendar, icon: Calendar },
                 {
                   id: 'voting',
-                  label: 'Votación',
+                  label: t.plan.tabs.voting,
                   icon: Vote,
                   badge: blindVoteStats?.hidden
                     ? blindVoteStats.votersCount || undefined
@@ -939,10 +966,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                       ? votes.length
                       : undefined,
                 },
-                { id: 'matrix', label: 'Comparativa', icon: Grid3X3 },
+                { id: 'matrix', label: t.plan.tabs.matrix, icon: Grid3X3 },
                 {
                   id: 'logistics',
-                  label: 'Logística',
+                  label: t.plan.tabs.logistics,
                   icon: ClipboardList,
                   badge: logisticsCount > 0 ? logisticsCount : undefined,
                 },
@@ -1078,7 +1105,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                     initialOptions,
                   });
                   setSnapshot(res.snapshot);
-                  showToast('Encuesta creada');
+                  showToast(t.plan.toasts.pollCreated);
                 }}
                 onAddSubPollOption={async (pollId, title, url, estimatedCost) => {
                   const res = await api.addSubPollOption(slug, pollId, {
@@ -1088,7 +1115,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                     estimatedCost,
                   });
                   setSnapshot(res.snapshot);
-                  showToast('Opción añadida');
+                  showToast(t.plan.toasts.optionAdded);
                 }}
                 onToggleSubPollVote={async (pollId, optionId) => {
                   if (!me) return;
@@ -1101,12 +1128,14 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                 onSetSubPollWinner={async (pollId, winnerOptionId) => {
                   const res = await api.setSubPollWinner(slug, pollId, winnerOptionId);
                   setSnapshot(res.snapshot);
-                  showToast(winnerOptionId ? 'Opción marcada como ganadora' : 'Ganadora desmarcada');
+                  showToast(
+                    winnerOptionId ? t.plan.toasts.winnerSet : t.plan.toasts.winnerCleared
+                  );
                 }}
                 onDeleteSubPoll={async (pollId) => {
                   const res = await api.deleteSubPoll(slug, pollId);
                   setSnapshot(res.snapshot);
-                  showToast('Encuesta eliminada');
+                  showToast(t.plan.toasts.pollDeleted);
                 }}
                 onAddChecklistItem={async (title, assignToMe) => {
                   const res = await api.addChecklistItem(slug, {
@@ -1134,22 +1163,27 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                     notes,
                   });
                   setSnapshot(res.snapshot);
-                  showToast('Coche publicado');
+                  showToast(t.plan.toasts.carPublished);
                 }}
                 onToggleCarpoolSeat={async (rideId) => {
                   if (!me) return;
                   try {
                     const res = await api.toggleCarpoolSeat(slug, rideId, me.id);
                     setSnapshot(res.snapshot);
-                    showToast(res.joined ? 'Plaza reservada en el coche' : 'Plaza liberada');
+                    showToast(
+                      res.joined ? t.plan.toasts.seatReserved : t.plan.toasts.seatReleased
+                    );
                   } catch (err) {
-                    showToast(err instanceof Error ? err.message : 'No se pudo reservar', 'err');
+                    showToast(
+                      err instanceof Error ? err.message : t.plan.toasts.seatReserveErr,
+                      'err'
+                    );
                   }
                 }}
                 onDeleteCarpool={async (rideId) => {
                   const res = await api.deleteCarpoolRide(slug, rideId);
                   setSnapshot(res.snapshot);
-                  showToast('Coche eliminado');
+                  showToast(t.plan.toasts.carDeleted);
                 }}
                 onRequireIdentity={() => setIdentityModalMode('join')}
               />
@@ -1213,13 +1247,13 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               <div className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-teal-600 dark:text-teal-400" />
                 <h3 className="font-display text-sm font-extrabold tracking-tight">
-                  Notas del grupo ({generalComments.length})
+                  {t.plan.groupNotesTitle(generalComments.length)}
                 </h3>
               </div>
 
               {generalComments.length === 0 ? (
                 <p className="text-xs text-stone-500 dark:text-slate-400">
-                  Deja un comentario rápido sobre horarios, sitio o ideas para la quedada.
+                  {t.plan.groupNotesEmpty}
                 </p>
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -1233,7 +1267,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                         {author && <Avatar participant={author} size="xs" className="mt-0.5" />}
                         <div className="min-w-0 flex-1">
                           <span className="font-bold text-stone-800 dark:text-slate-100">
-                            {author?.name ?? 'Amigo'}
+                            {author?.name ?? t.common.friendFallback}
                           </span>
                           <p className="text-stone-600 dark:text-slate-300 mt-0.5 break-words">
                             {c.body}
@@ -1259,13 +1293,13 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
                   maxLength={320}
                   value={generalNote}
                   onChange={(e) => setGeneralNote(e.target.value)}
-                  placeholder="Escribe una nota para todos..."
+                  placeholder={t.plan.groupNotePlaceholder}
                   className="flex-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-2 text-xs outline-none focus:border-teal-500 transition"
                 />
                 <button
                   type="submit"
                   disabled={!generalNote.trim()}
-                  aria-label="Publicar nota"
+                  aria-label={t.plan.publishNoteAria}
                   className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white transition cursor-pointer"
                 >
                   <Send className="h-3.5 w-3.5" />

@@ -17,9 +17,9 @@ import {
   AVATAR_COLORS,
   AVATAR_EMOJIS,
   PLAN_EMOJIS,
-  formatDateLongEs,
+  formatDateLong,
 } from '../../shared/dates';
-import { HOLIDAY_COUNTRIES } from '../../shared/holidays';
+import { getHolidayCountries } from '../../shared/holidays';
 import type { HolidayCountry, PlanGranularity } from '../../shared/types';
 import {
   getRecentPlans,
@@ -29,6 +29,8 @@ import {
   saveParticipantToken,
   type ThemeMode,
 } from '../lib/storage';
+import { useI18n } from '../lib/i18n';
+import { LanguageSelector } from './LanguageSelector';
 
 interface HomePageProps {
   onOpenPlan: (slug: string) => void;
@@ -37,6 +39,7 @@ interface HomePageProps {
 }
 
 export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
+  const { language, t } = useI18n();
   const [title, setTitle] = useState('');
   const [organizerName, setOrganizerName] = useState('');
   const [location, setLocation] = useState('');
@@ -57,6 +60,10 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
   const [myRecentPlans, setMyRecentPlans] = useState<PublicPlanSummary[]>([]);
 
   useEffect(() => {
+    document.title = t.meta.homeTitle;
+  }, [t.meta.homeTitle]);
+
+  useEffect(() => {
     api
       .listPublicPlans()
       .then((res) => setDemoPlans(res.plans))
@@ -68,7 +75,6 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
         .lookupPlans(localRecent.map((r) => r.slug))
         .then((res) => setMyRecentPlans(res.plans))
         .catch(() => {
-          // Offline fallback using local cache
           setMyRecentPlans(
             localRecent.map((r) => ({
               slug: r.slug,
@@ -87,11 +93,11 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !organizerName.trim()) {
-      setError('Ponle un nombre a la quedada y dinos cómo te llamas.');
+      setError(t.home.errMissingFields);
       return;
     }
     if (organizerPin.trim() && organizerPin.trim().length < 4) {
-      setError('El PIN opcional debe tener al menos 4 caracteres.');
+      setError(t.home.errPinTooShort);
       return;
     }
     setSubmitting(true);
@@ -123,13 +129,14 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
       });
       onOpenPlan(created.plan.slug);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo crear la quedada');
+      setError(err instanceof Error ? err.message : t.home.errCreateFailed);
     } finally {
       setSubmitting(false);
     }
   }
 
   const demoPlan = demoPlans.find((p) => p.slug === 'cena-reencuentro') ?? demoPlans[0];
+  const holidayCountries = getHolidayCountries(language);
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] dark:bg-[#0E1318] text-stone-900 dark:text-slate-100">
@@ -161,13 +168,14 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
               className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-teal-200 dark:border-teal-800/70 bg-teal-50/80 dark:bg-teal-950/50 px-3.5 py-1.5 text-sm font-medium text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition cursor-pointer"
             >
               <span>{demoPlan.emoji}</span>
-              <span>Ver ejemplo en vivo</span>
+              <span>{t.home.viewLiveDemo}</span>
             </button>
           )}
+          <LanguageSelector variant="pill" />
           <button
             type="button"
             onClick={onToggleTheme}
-            aria-label="Cambiar tema"
+            aria-label={t.common.changeTheme}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-700 transition cursor-pointer"
           >
             {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -180,16 +188,14 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
           {/* Left Hero Column */}
           <div className="lg:col-span-6 lg:pt-4 space-y-6 animate-fade-up">
             <h1 className="font-display text-4xl font-extrabold tracking-tight text-stone-900 dark:text-white sm:text-5xl leading-[1.1]">
-              Ponerse de acuerdo para quedar{' '}
+              {t.home.heroTitleLead}
               <span className="bg-gradient-to-r from-teal-600 via-emerald-600 to-teal-500 bg-clip-text text-transparent">
-                por fin es fácil.
+                {t.home.heroTitleHighlight}
               </span>
             </h1>
 
             <p className="text-base sm:text-lg text-stone-600 dark:text-slate-300 leading-relaxed max-w-xl">
-              Crea un calendario privado en segundos, pásale el enlace o QR a tus amigos, pintad los
-              días o franjas que podéis, votad fecha y lugar, y organizad coches y tareas sin salir
-              del mismo link.
+              {t.home.heroSubtitle}
             </p>
 
             {/* 3 Visual Value Pills */}
@@ -198,9 +204,9 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                   <CalendarHeart className="h-4.5 w-4.5" />
                 </div>
-                <p className="font-display text-sm font-bold">Días, franjas y escapadas</p>
+                <p className="font-display text-sm font-bold">{t.home.pill1Title}</p>
                 <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
-                  Pinta deslizando, añade notas por día o busca puentes de varios días.
+                  {t.home.pill1Desc}
                 </p>
               </div>
 
@@ -208,9 +214,9 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300">
                   <Vote className="h-4.5 w-4.5" />
                 </div>
-                <p className="font-display text-sm font-bold">Votación inteligente</p>
+                <p className="font-display text-sm font-bold">{t.home.pill2Title}</p>
                 <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
-                  Voto oculto, fecha límite, imprescindibles y ranking equilibrado.
+                  {t.home.pill2Desc}
                 </p>
               </div>
 
@@ -218,9 +224,9 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
                   <Users className="h-4.5 w-4.5" />
                 </div>
-                <p className="font-display text-sm font-bold">Logística resuelta</p>
+                <p className="font-display text-sm font-bold">{t.home.pill3Title}</p>
                 <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
-                  RSVP con +1, encuestas de sitio, checklist y reparto de coches.
+                  {t.home.pill3Desc}
                 </p>
               </div>
             </div>
@@ -234,13 +240,13 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                   </span>
                   <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-300">
-                      Ejemplo interactivo listo para probar
+                      {t.home.demoTag}
                     </p>
                     <p className="font-display font-bold text-stone-900 dark:text-white truncate">
                       {demoPlan.title}
                     </p>
                     <p className="text-xs text-stone-600 dark:text-slate-400">
-                      {demoPlan.participantCount} amigos apuntados · votación y logística activas
+                      {t.home.demoMeta(demoPlan.participantCount)}
                     </p>
                   </div>
                 </div>
@@ -249,7 +255,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                   onClick={() => onOpenPlan(demoPlan.slug)}
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 px-3.5 py-2 text-sm font-semibold text-white shadow-xs transition cursor-pointer"
                 >
-                  Explorar
+                  {t.home.demoExplore}
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
@@ -264,17 +270,17 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
             >
               <div>
                 <h2 className="font-display text-2xl font-bold tracking-tight">
-                  Crea una nueva quedada
+                  {t.home.formTitle}
                 </h2>
                 <p className="mt-1 text-sm text-stone-500 dark:text-slate-400">
-                  Enlace privado listo para compartir en 10 segundos. Sin registros.
+                  {t.home.formSubtitle}
                 </p>
               </div>
 
               {/* Emoji picker */}
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-slate-400 mb-2">
-                  Icono del plan
+                  {t.home.planIconLabel}
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   {PLAN_EMOJIS.map((item) => (
@@ -300,7 +306,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     htmlFor="plan-title"
                     className="block text-sm font-medium text-stone-700 dark:text-slate-200 mb-1.5"
                   >
-                    ¿Qué plan queréis hacer?
+                    {t.home.planTitleLabel}
                   </label>
                   <input
                     id="plan-title"
@@ -309,7 +315,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     maxLength={80}
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Ej: Escapada a la sierra, Cena de viernes, Partida de Catan..."
+                    placeholder={t.home.planTitlePlaceholder}
                     className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-3 focus:ring-teal-500/15 transition"
                   />
                 </div>
@@ -319,7 +325,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     htmlFor="organizer-name"
                     className="block text-sm font-medium text-stone-700 dark:text-slate-200 mb-1.5"
                   >
-                    Tu nombre
+                    {t.home.organizerNameLabel}
                   </label>
                   <input
                     id="organizer-name"
@@ -328,7 +334,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     maxLength={32}
                     value={organizerName}
                     onChange={(e) => setOrganizerName(e.target.value)}
-                    placeholder="Ej: Alex"
+                    placeholder={t.home.organizerNamePlaceholder}
                     className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-3 focus:ring-teal-500/15 transition"
                   />
                 </div>
@@ -338,7 +344,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     htmlFor="plan-location"
                     className="block text-sm font-medium text-stone-700 dark:text-slate-200 mb-1.5"
                   >
-                    Lugar <span className="text-stone-400 font-normal">(opcional)</span>
+                    {t.home.locationLabel}{' '}
+                    <span className="text-stone-400 font-normal">({t.common.optional})</span>
                   </label>
                   <div className="relative">
                     <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
@@ -348,7 +355,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                       maxLength={120}
                       value={location}
                       onChange={(e) => setLocation(e.target.value)}
-                      placeholder="Ej: Centro, Casa de Ana..."
+                      placeholder={t.home.locationPlaceholder}
                       className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 pl-9 pr-3.5 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-3 focus:ring-teal-500/15 transition"
                     />
                   </div>
@@ -362,9 +369,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                   onClick={() => setShowMoreOptions((v) => !v)}
                   className="text-xs font-semibold text-teal-700 dark:text-teal-300 hover:underline cursor-pointer"
                 >
-                  {showMoreOptions
-                    ? '− Ocultar opciones avanzadas'
-                    : '+ Franjas horarias, escapada multi-día, voto oculto o fecha límite'}
+                  {showMoreOptions ? t.home.hideAdvanced : t.home.showAdvanced}
                 </button>
 
                 {showMoreOptions && (
@@ -374,7 +379,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                         htmlFor="plan-desc"
                         className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5"
                       >
-                        Descripción o detalles para el grupo
+                        {t.home.descriptionLabel}
                       </label>
                       <textarea
                         id="plan-desc"
@@ -382,7 +387,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                         maxLength={400}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
-                        placeholder="Ej: Apuntad los días que tenéis libres este mes y votad vuestro favorito."
+                        placeholder={t.home.descriptionPlaceholder}
                         className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-3 focus:ring-teal-500/15 transition resize-none"
                       />
                     </div>
@@ -392,12 +397,12 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                       <div>
                         <span className="flex items-center gap-1 text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
                           <Clock className="h-3.5 w-3.5 text-teal-600" />
-                          Modo de calendario
+                          {t.home.calendarModeLabel}
                         </span>
                         <div className="grid grid-cols-2 gap-1.5">
                           {[
-                            { id: 'day' as const, label: 'Días' },
-                            { id: 'slots' as const, label: 'M / T / N' },
+                            { id: 'day' as const, label: t.home.modeDays },
+                            { id: 'slots' as const, label: t.home.modeSlots },
                           ].map((g) => (
                             <button
                               key={g.id}
@@ -418,19 +423,19 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                       <div>
                         <span className="flex items-center gap-1 text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
                           <CalendarRange className="h-3.5 w-3.5 text-teal-600" />
-                          Duración del plan
+                          {t.home.durationLabel}
                         </span>
                         <select
                           value={durationDays}
                           onChange={(e) => setDurationDays(Number(e.target.value))}
                           className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
                         >
-                          <option value={1}>1 día (quedada puntual)</option>
-                          <option value={2}>2 días seguidos (finde)</option>
-                          <option value={3}>3 días seguidos (puente)</option>
-                          <option value={4}>4 días seguidos (escapada)</option>
-                          <option value={5}>5 días seguidos (viaje)</option>
-                          <option value={7}>7 días seguidos (semana)</option>
+                          <option value={1}>{t.home.durationOptions[1]}</option>
+                          <option value={2}>{t.home.durationOptions[2]}</option>
+                          <option value={3}>{t.home.durationOptions[3]}</option>
+                          <option value={4}>{t.home.durationOptions[4]}</option>
+                          <option value={5}>{t.home.durationOptions[5]}</option>
+                          <option value={7}>{t.home.durationOptions[7]}</option>
                         </select>
                       </div>
                     </div>
@@ -439,7 +444,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <span className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          Votos por persona
+                          {t.home.votesPerPersonLabel}
                         </span>
                         <div className="grid grid-cols-4 gap-1.5">
                           {[
@@ -466,14 +471,14 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
 
                       <div>
                         <label className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          Festivos en calendario
+                          {t.home.holidaysLabel}
                         </label>
                         <select
                           value={holidayCountry}
                           onChange={(e) => setHolidayCountry(e.target.value as HolidayCountry)}
                           className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
                         >
-                          {HOLIDAY_COUNTRIES.map((c) => (
+                          {holidayCountries.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.label}
                             </option>
@@ -486,7 +491,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <label className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          Cierre automático votación <span className="text-stone-400">(opcional)</span>
+                          {t.home.autoCloseLabel}{' '}
+                          <span className="text-stone-400">({t.common.optional})</span>
                         </label>
                         <input
                           type="datetime-local"
@@ -498,7 +504,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
 
                       <div>
                         <label className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          Tu PIN multi-dispositivo <span className="text-stone-400">(opcional)</span>
+                          {t.home.pinLabel}{' '}
+                          <span className="text-stone-400">({t.common.optional})</span>
                         </label>
                         <input
                           type="password"
@@ -506,7 +513,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                           maxLength={12}
                           value={organizerPin}
                           onChange={(e) => setOrganizerPin(e.target.value)}
-                          placeholder="Ej: 1234 (para entrar desde otro móvil)"
+                          placeholder={t.home.pinPlaceholder}
                           className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-teal-500"
                         />
                       </div>
@@ -520,7 +527,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                         className="h-4 w-4 rounded accent-teal-600"
                       />
                       <EyeOff className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                      <span>Voto oculto hasta cerrar votación (evita el efecto rebaño)</span>
+                      <span>{t.home.blindVotingLabel}</span>
                     </label>
                   </div>
                 )}
@@ -537,7 +544,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 disabled={submitting}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 disabled:opacity-60 px-5 py-3.5 font-display text-base font-bold text-white shadow-md shadow-teal-600/20 transition cursor-pointer"
               >
-                {submitting ? 'Creando calendario...' : 'Crear calendario y compartir'}
+                {submitting ? t.home.creatingBtn : t.home.createBtn}
                 <ArrowRight className="h-4.5 w-4.5" />
               </button>
             </form>
@@ -549,10 +556,10 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
           <section className="mt-16 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-lg font-bold text-stone-800 dark:text-slate-100">
-                Tus quedadas recientes
+                {t.home.recentTitle}
               </h2>
               <span className="text-xs text-stone-500 dark:text-slate-400">
-                Solo visibles en este navegador
+                {t.home.recentHint}
               </span>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -578,12 +585,12 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                     <div className="mt-2 flex items-center gap-3 text-xs text-stone-500 dark:text-slate-400">
                       <span className="inline-flex items-center gap-1">
                         <Users className="h-3.5 w-3.5" />
-                        {plan.participantCount} {plan.participantCount === 1 ? 'persona' : 'personas'}
+                        {t.common.people(plan.participantCount)}
                       </span>
                       {plan.confirmedDate && (
                         <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-medium">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          {formatDateLongEs(plan.confirmedDate)}
+                          {formatDateLong(plan.confirmedDate, language)}
                         </span>
                       )}
                     </div>

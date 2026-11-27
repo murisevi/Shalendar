@@ -7,10 +7,17 @@ import {
   buildIcsContent,
   buildMonthGrid,
   computeDaySummaries,
+  formatDateLong,
+  formatDateRange,
+  formatDateShortParts,
+  getMonthLabel,
+  getTimeSlots,
+  getWeekdaysShort,
   rankBestDates,
   rankBestRanges,
 } from '../shared/dates.js';
-import { getHolidayInfo } from '../shared/holidays.js';
+import { getHolidayCountries, getHolidayInfo } from '../shared/holidays.js';
+import { TRANSLATIONS } from '../src/lib/i18n.js';
 
 describe('shared date, holiday, slot, range & export logic', () => {
   it('builds a Monday-first month grid with correct week alignment', () => {
@@ -390,6 +397,102 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
     expect(snap!.subPolls.length).toBeGreaterThanOrEqual(1);
     expect(snap!.checklist.length).toBeGreaterThanOrEqual(2);
     expect(snap!.carpools.length).toBeGreaterThanOrEqual(1);
+    db.close();
+  });
+});
+
+describe('i18n support (Spanish & English)', () => {
+  it('formats dates, months, weekdays, slots, holidays, and ICS in both ES and EN', () => {
+    expect(getMonthLabel('2026-12', 'es')).toBe('Diciembre 2026');
+    expect(getMonthLabel('2026-12', 'en')).toBe('December 2026');
+
+    expect(formatDateLong('2026-12-12', 'es')).toBe('Sábado, 12 de diciembre');
+    expect(formatDateLong('2026-12-12', 'en')).toBe('Saturday, December 12');
+
+    expect(formatDateRange('2026-12-11', '2026-12-13', 'es')).toBe('Vie 11 – Dom 13 de diciembre');
+    expect(formatDateRange('2026-12-11', '2026-12-13', 'en')).toBe('Fri 11 – Sun 13 Dec');
+
+    expect(formatDateShortParts('2026-12-12', 'es')).toEqual({
+      weekday: 'SÁB',
+      day: 12,
+      month: 'DIC',
+      year: 2026,
+    });
+    expect(formatDateShortParts('2026-12-12', 'en')).toEqual({
+      weekday: 'SAT',
+      day: 12,
+      month: 'DEC',
+      year: 2026,
+    });
+
+    expect(getWeekdaysShort('es')).toEqual(['L', 'M', 'X', 'J', 'V', 'S', 'D']);
+    expect(getWeekdaysShort('en')).toEqual(['M', 'T', 'W', 'T', 'F', 'S', 'S']);
+
+    expect(getTimeSlots('es').map((s) => s.label)).toEqual(['Mañana', 'Tarde', 'Noche']);
+    expect(getTimeSlots('en').map((s) => s.label)).toEqual(['Morning', 'Afternoon', 'Evening']);
+
+    expect(getHolidayInfo('2026-04-03', 'ES', 'es')?.name).toBe('Viernes Santo');
+    expect(getHolidayInfo('2026-04-03', 'ES', 'en')?.name).toBe('Good Friday');
+    expect(getHolidayInfo('2026-11-26', 'US', 'es')?.name).toBe('Acción de Gracias');
+    expect(getHolidayInfo('2026-11-26', 'US', 'en')?.name).toBe('Thanksgiving');
+
+    expect(getHolidayCountries('es').find((c) => c.id === 'none')?.label).toBe('Sin festivos');
+    expect(getHolidayCountries('en').find((c) => c.id === 'none')?.label).toBe('No holidays');
+
+    const icsEn = buildIcsContent({
+      title: 'Dinner',
+      date: '2026-12-12',
+      url: 'https://shalendar.app/e/demo',
+      lang: 'en',
+    });
+    expect(icsEn).toContain('PRODID:-//Shalendar//Plans//EN');
+    expect(icsEn).toContain('View plan:');
+  });
+
+  it('has complete structural parity between ES and EN translation dictionaries', () => {
+    const collectKeys = (obj: Record<string, unknown>, prefix = ''): string[] => {
+      const keys: string[] = [];
+      for (const [k, v] of Object.entries(obj)) {
+        const full = prefix ? `${prefix}.${k}` : k;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          keys.push(...collectKeys(v as Record<string, unknown>, full));
+        } else {
+          keys.push(full);
+        }
+      }
+      return keys.sort();
+    };
+    expect(collectKeys(TRANSLATIONS.en as unknown as Record<string, unknown>)).toEqual(
+      collectKeys(TRANSLATIONS.es as unknown as Record<string, unknown>)
+    );
+  });
+
+  it('localizes server API errors and OG SVG cards when X-Language or lang=en is sent', async () => {
+    const db = new ShalendarDB(':memory:');
+    db.seedDemoPlanIfEmpty();
+    const app = createApp(db, new PlanEventHub());
+
+    const notFoundEn = await app.request('/api/plans/does-not-exist', {
+      headers: { 'X-Language': 'en' },
+    });
+    expect(notFoundEn.status).toBe(404);
+    expect((await notFoundEn.json()) as { error: string }).toEqual({ error: 'Plan not found' });
+
+    const notFoundEs = await app.request('/api/plans/does-not-exist', {
+      headers: { 'X-Language': 'es' },
+    });
+    expect(notFoundEs.status).toBe(404);
+    expect((await notFoundEs.json()) as { error: string }).toEqual({
+      error: 'No encontramos esa quedada',
+    });
+
+    const ogEn = await app.request('/api/plans/cena-reencuentro/og.svg?lang=en');
+    expect(ogEn.status).toBe(200);
+    const svgText = await ogEn.text();
+    expect(svgText).toContain('SHALENDAR · LIVE');
+    expect(svgText).toContain('Best day:');
+    expect(svgText).toContain('Collaborative calendar');
+
     db.close();
   });
 });

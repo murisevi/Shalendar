@@ -24,16 +24,18 @@ import type {
   PlanGranularity,
 } from '../../shared/types';
 import {
-  TIME_SLOTS,
-  WEEKDAYS_SHORT_ES,
   addMonthsISO,
   buildMonthGrid,
   formatDateISO,
-  getMonthLabelEs,
+  getMonthLabel,
+  getMonthShortLabel,
+  getTimeSlots,
+  getWeekdaysShort,
   isFriSatSun,
   isSaturdayOrSunday,
 } from '../../shared/dates';
 import { getHolidayInfo } from '../../shared/holidays';
+import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 export type BrushMode = AvailabilityStatus | 'clear' | 'inspect';
@@ -130,9 +132,13 @@ export function InteractiveCalendar({
   onUndo,
   onRequireIdentity,
 }: InteractiveCalendarProps) {
+  const { language, t } = useI18n();
   const [brush, setBrush] = useState<BrushMode>('yes');
   const [activeSlot, setActiveSlot] = useState<AvailabilitySlot>('all');
   const [onlyMineMode, setOnlyMineMode] = useState(false);
+
+  const timeSlots = useMemo(() => getTimeSlots(language), [language]);
+  const weekdaysShort = useMemo(() => getWeekdaysShort(language), [language]);
 
   // Drag-painting state (mouse + mobile touch)
   const isDraggingRef = useRef(false);
@@ -153,7 +159,7 @@ export function InteractiveCalendar({
     if (granularity === 'slots' && activeSlot === 'all') {
       const out: Array<{ date: string; slot: AvailabilitySlot; status: AvailabilityStatus | null }> = [];
       for (const item of dates) {
-        for (const s of TIME_SLOTS) {
+        for (const s of timeSlots) {
           out.push({ date: item.date, slot: s.id, status: item.status });
         }
         if (item.status === null) {
@@ -260,7 +266,6 @@ export function InteractiveCalendar({
     const statusToApply: AvailabilityStatus | null =
       brush === 'inspect' ? 'yes' : brush === 'clear' ? null : brush;
 
-    // If all cells in that column already have this status, toggle them off!
     const allAlreadyMatch =
       statusToApply !== null &&
       targets.every((c) => getMyStatusForCurrentSlot(c.date) === statusToApply);
@@ -300,7 +305,7 @@ export function InteractiveCalendar({
     for (const date of targetDates) {
       changes.push({ date, slot: 'all', status: null });
       if (granularity === 'slots') {
-        for (const s of TIME_SLOTS) {
+        for (const s of timeSlots) {
           changes.push({ date, slot: s.id, status: null });
         }
       }
@@ -327,13 +332,13 @@ export function InteractiveCalendar({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-semibold text-stone-500 dark:text-slate-400 mr-1 hidden sm:inline">
-              Pincel:
+              {t.calendar.brushLabel}
             </span>
             {(
               [
                 {
                   id: 'yes',
-                  label: 'Puedo',
+                  label: t.calendar.brushYes,
                   icon: Check,
                   active:
                     'bg-emerald-600 text-white border-emerald-600 shadow-xs shadow-emerald-600/20',
@@ -341,21 +346,21 @@ export function InteractiveCalendar({
                 },
                 {
                   id: 'maybe',
-                  label: 'Quizá',
+                  label: t.calendar.brushMaybe,
                   icon: HelpCircle,
                   active: 'bg-amber-500 text-white border-amber-500 shadow-xs shadow-amber-500/20',
                   idle: 'bg-amber-50/80 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border-amber-200/80 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-950/70',
                 },
                 {
                   id: 'no',
-                  label: 'No puedo',
+                  label: t.calendar.brushNo,
                   icon: X,
                   active: 'bg-rose-500 text-white border-rose-500 shadow-xs shadow-rose-500/20',
                   idle: 'bg-rose-50/80 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 border-rose-200/80 dark:border-rose-800/60 hover:bg-rose-100 dark:hover:bg-rose-950/70',
                 },
                 {
                   id: 'clear',
-                  label: 'Borrar',
+                  label: t.calendar.brushClear,
                   icon: Eraser,
                   active:
                     'bg-stone-800 dark:bg-slate-200 text-white dark:text-slate-900 border-stone-800 dark:border-slate-200',
@@ -363,7 +368,7 @@ export function InteractiveCalendar({
                 },
                 {
                   id: 'inspect',
-                  label: 'Solo ver',
+                  label: t.calendar.brushInspect,
                   icon: Eye,
                   active: 'bg-teal-700 text-white border-teal-700',
                   idle: 'bg-stone-100 dark:bg-slate-800 text-stone-700 dark:text-slate-300 border-stone-200 dark:border-slate-700 hover:bg-stone-200/70 dark:hover:bg-slate-700',
@@ -393,11 +398,11 @@ export function InteractiveCalendar({
               <button
                 type="button"
                 onClick={onUndo}
-                title="Deshacer último cambio"
+                title={t.calendar.undoTitle}
                 className="inline-flex items-center gap-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-stone-100 dark:hover:bg-slate-700 px-2.5 py-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200 transition cursor-pointer"
               >
                 <Undo2 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Deshacer</span>
+                <span className="hidden sm:inline">{t.calendar.undoLabel}</span>
               </button>
             )}
             <button
@@ -409,7 +414,7 @@ export function InteractiveCalendar({
                   : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-stone-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-slate-700'
               }`}
             >
-              {onlyMineMode ? 'Vista: Solo mis días' : 'Vista: Grupo + míos'}
+              {onlyMineMode ? t.calendar.viewOnlyMine : t.calendar.viewGroupAndMine}
             </button>
           </div>
         </div>
@@ -418,7 +423,7 @@ export function InteractiveCalendar({
         {granularity === 'slots' && (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-stone-100 dark:border-slate-800 pt-2.5">
             <span className="text-xs font-semibold text-stone-500 dark:text-slate-400 mr-1">
-              Franja a pintar:
+              {t.calendar.slotToPaint}
             </span>
             <button
               type="button"
@@ -429,9 +434,9 @@ export function InteractiveCalendar({
                   : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
               }`}
             >
-              Todo el día (M+T+N)
+              {t.calendar.allDaySlots}
             </button>
-            {TIME_SLOTS.map((slot) => (
+            {timeSlots.map((slot) => (
               <button
                 key={slot.id}
                 type="button"
@@ -454,9 +459,7 @@ export function InteractiveCalendar({
           <span className="flex items-center gap-1.5">
             <Sparkles className="h-3.5 w-3.5 text-teal-500 shrink-0" />
             <span>
-              {brush === 'inspect'
-                ? 'Haz clic en cualquier día para ver quién puede ir y sus notas.'
-                : 'Arrastra sobre los días (o pulsa L–D arriba) para pintar rápido.'}
+              {brush === 'inspect' ? t.calendar.tipInspect : t.calendar.tipDrag}
             </span>
           </span>
           <div className="flex items-center gap-2">
@@ -465,7 +468,7 @@ export function InteractiveCalendar({
               onClick={handlePaintWeekends}
               className="rounded-lg bg-stone-100 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-teal-950/60 hover:text-teal-700 dark:hover:text-teal-300 px-2.5 py-1 font-medium transition cursor-pointer"
             >
-              Marcar findes (V-D)
+              {t.calendar.markWeekends}
             </button>
             <button
               type="button"
@@ -473,7 +476,7 @@ export function InteractiveCalendar({
               className="inline-flex items-center gap-1 rounded-lg bg-stone-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-rose-600 dark:hover:text-rose-300 px-2.5 py-1 font-medium transition cursor-pointer"
             >
               <Trash2 className="h-3 w-3" />
-              Limpiar mes
+              {t.calendar.clearMonth}
             </button>
           </div>
         </div>
@@ -486,18 +489,18 @@ export function InteractiveCalendar({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              aria-label="Mes anterior"
+              aria-label={t.calendar.prevMonthAria}
               onClick={() => onChangeMonth(addMonthsISO(currentMonth, -1))}
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               <ChevronLeft className="h-4.5 w-4.5" />
             </button>
             <h2 className="font-display text-lg sm:text-xl font-extrabold tracking-tight min-w-[165px] text-center">
-              {getMonthLabelEs(currentMonth)}
+              {getMonthLabel(currentMonth, language)}
             </h2>
             <button
               type="button"
-              aria-label="Mes siguiente"
+              aria-label={t.calendar.nextMonthAria}
               onClick={() => onChangeMonth(addMonthsISO(currentMonth, 1))}
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
@@ -511,7 +514,7 @@ export function InteractiveCalendar({
               onClick={() => onChangeMonth(todayISO.slice(0, 7))}
               className="rounded-xl border border-stone-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
-              Hoy
+              {t.calendar.today}
             </button>
             <div className="hidden md:flex items-center gap-1">
               {quickMonths.map((ym) => (
@@ -525,7 +528,7 @@ export function InteractiveCalendar({
                       : 'text-stone-500 dark:text-slate-400 hover:bg-stone-100 dark:hover:bg-slate-800'
                   }`}
                 >
-                  {getMonthLabelEs(ym).split(' ')[0].slice(0, 3)}
+                  {getMonthShortLabel(ym, language)}
                 </button>
               ))}
             </div>
@@ -534,12 +537,12 @@ export function InteractiveCalendar({
 
         {/* Interactive Weekday Headers (click to paint entire weekday column!) */}
         <div className="grid grid-cols-7 gap-1.5 sm:gap-2 mb-1.5">
-          {WEEKDAYS_SHORT_ES.map((wd, idx) => (
+          {weekdaysShort.map((wd, idx) => (
             <button
-              key={wd}
+              key={`${idx}-${wd}`}
               type="button"
               onClick={() => handlePaintWeekdayColumn(idx)}
-              title={`Marcar o quitar todos los ${wd} del mes`}
+              title={t.calendar.weekdayColumnTitle(wd)}
               className={`rounded-lg text-center text-[11px] font-bold uppercase tracking-wider py-1 transition cursor-pointer hover:bg-teal-50 dark:hover:bg-teal-950/50 ${
                 idx >= 5
                   ? 'text-teal-700 dark:text-teal-400'
@@ -579,7 +582,7 @@ export function InteractiveCalendar({
                 : cell.date === confirmedDate);
             const isInHighlightedRange = highlightedRangeDates?.has(cell.date) ?? false;
             const isWeekendReal = isSaturdayOrSunday(cell.date);
-            const holiday = getHolidayInfo(cell.date, holidayCountry);
+            const holiday = getHolidayInfo(cell.date, holidayCountry, language);
 
             const isDimmedByFilter =
               filterParticipantIds.length > 0 && !(summary?.allFilteredAvailable ?? false);
@@ -608,7 +611,13 @@ export function InteractiveCalendar({
                 data-calendar-date={cell.date}
                 role="button"
                 tabIndex={0}
-                aria-label={`${cell.date}${holiday ? `, festivo ${holiday.name}` : ''}, ${yesCount} pueden, ${maybeCount} quizá, ${voteCount} votos`}
+                aria-label={t.calendar.cellAriaLabel({
+                  date: cell.date,
+                  holidayName: holiday?.name,
+                  yesCount,
+                  maybeCount,
+                  voteCount,
+                })}
                 onPointerDown={(e) => {
                   if (brush !== 'inspect') e.preventDefault();
                   startCellInteraction(cell.date);
@@ -687,12 +696,12 @@ export function InteractiveCalendar({
                     )}
                     {holiday && (
                       <span
-                        title={`Festivo: ${holiday.name}`}
+                        title={t.calendar.holidayPrefix(holiday.name)}
                         className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"
                       />
                     )}
                     {summary?.hasNotes && (
-                      <span title="Hay notas en este día" className="shrink-0">
+                      <span title={t.calendar.hasNotesTitle} className="shrink-0">
                         <MessageSquareText
                           className={`h-3 w-3 ${
                             isHighContrastBg ? 'text-white/85' : 'text-teal-600 dark:text-teal-400'
@@ -706,10 +715,10 @@ export function InteractiveCalendar({
                     <span
                       title={
                         effectiveMyStatus === 'yes'
-                          ? 'Tú: Puedo'
+                          ? t.calendar.myStatusYes
                           : effectiveMyStatus === 'maybe'
-                            ? 'Tú: Quizá'
-                            : 'Tú: No puedo'
+                            ? t.calendar.myStatusMaybe
+                            : t.calendar.myStatusNo
                       }
                       className={`flex h-4.5 w-4.5 sm:h-5 sm:w-5 items-center justify-center rounded-full text-[10px] font-bold shadow-2xs ring-1 ring-white/80 dark:ring-slate-900/80 shrink-0 ${
                         effectiveMyStatus === 'yes'
@@ -733,7 +742,7 @@ export function InteractiveCalendar({
                 {/* Middle: Holiday short label OR 3 Time-Slot Mini Bars */}
                 {granularity === 'slots' ? (
                   <div className="my-1 grid grid-cols-3 gap-0.5">
-                    {TIME_SLOTS.map((slot) => {
+                    {timeSlots.map((slot) => {
                       const sSummary = summary?.slots?.[slot.id];
                       const mySlotSt = mySlotAvailabilityMap.get(`${cell.date}:${slot.id}`);
                       const slotActive = onlyMineMode
@@ -752,7 +761,7 @@ export function InteractiveCalendar({
                       return (
                         <span
                           key={slot.id}
-                          title={`${slot.label}: ${sSummary?.yes.length ?? 0} pueden`}
+                          title={t.calendar.slotAvailableTitle(slot.label, sSummary?.yes.length ?? 0)}
                           className={`h-1.5 rounded-full ${slotActive}`}
                         />
                       );
@@ -797,11 +806,7 @@ export function InteractiveCalendar({
                               ? 'text-white/95'
                               : 'text-teal-900/80 dark:text-teal-100/90'
                         }`}
-                        title={
-                          missingRequired
-                            ? 'Falta algún participante imprescindible'
-                            : undefined
-                        }
+                        title={missingRequired ? t.calendar.missingRequiredTitle : undefined}
                       >
                         {yesCount}
                         {maybeCount > 0 ? `+${maybeCount}` : ''}
@@ -813,7 +818,7 @@ export function InteractiveCalendar({
 
                   {voteCount > 0 && (
                     <span
-                      title={`${voteCount} ${voteCount === 1 ? 'voto' : 'votos'}`}
+                      title={t.common.votes(voteCount)}
                       className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${
                         isHighContrastBg
                           ? 'bg-amber-300 text-amber-950'
@@ -833,7 +838,7 @@ export function InteractiveCalendar({
         {/* Legend Row */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 dark:border-slate-800 pt-3 text-[11px] text-stone-500 dark:text-slate-400">
           <div className="flex items-center gap-2">
-            <span>Menos gente</span>
+            <span>{t.calendar.legendLess}</span>
             <div className="flex items-center gap-1">
               <span className="h-3.5 w-3.5 rounded-md border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900" />
               <span className="h-3.5 w-3.5 rounded-md bg-teal-50 dark:bg-teal-950/60 border border-teal-200/50" />
@@ -841,14 +846,14 @@ export function InteractiveCalendar({
               <span className="h-3.5 w-3.5 rounded-md bg-teal-300 dark:bg-teal-700" />
               <span className="h-3.5 w-3.5 rounded-md bg-gradient-to-br from-teal-500 to-emerald-500" />
             </div>
-            <span>Todos pueden</span>
+            <span>{t.calendar.legendAll}</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             {holidayCountry !== 'none' && (
               <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-rose-500" />
-                Festivo
+                {t.calendar.legendHoliday}
               </span>
             )}
             {granularity === 'slots' && (
@@ -858,12 +863,12 @@ export function InteractiveCalendar({
                   <span className="h-1.5 w-2 rounded-full bg-teal-400" />
                   <span className="h-1.5 w-2 rounded-full bg-stone-300" />
                 </span>
-                M · T · N
+                {t.calendar.legendSlotsShort}
               </span>
             )}
             <span className="inline-flex items-center gap-1">
               <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
-              Votos
+              {t.calendar.legendVotes}
             </span>
           </div>
         </div>
@@ -877,8 +882,8 @@ export function InteractiveCalendar({
               <Filter className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
               <span>
                 {filterParticipantIds.length > 0
-                  ? `Mostrando días en que coinciden los ${filterParticipantIds.length} seleccionados`
-                  : 'Filtrar por amigos (ver qué días coinciden)'}
+                  ? t.calendar.filterActive(filterParticipantIds.length)
+                  : t.calendar.filterPrompt}
               </span>
             </div>
             {filterParticipantIds.length > 0 && (
@@ -887,7 +892,7 @@ export function InteractiveCalendar({
                 onClick={onClearFilters}
                 className="text-xs font-semibold text-teal-700 dark:text-teal-300 hover:underline cursor-pointer"
               >
-                Ver a todo el grupo
+                {t.calendar.showAllGroup}
               </button>
             )}
           </div>
@@ -910,7 +915,9 @@ export function InteractiveCalendar({
                   <Avatar participant={p} size="xs" online={isOnline} required={isReq} />
                   <span>{p.name}</span>
                   {me?.id === p.id && (
-                    <span className="text-[10px] text-stone-400 dark:text-slate-400">(tú)</span>
+                    <span className="text-[10px] text-stone-400 dark:text-slate-400">
+                      {t.common.youTag}
+                    </span>
                   )}
                 </button>
               );

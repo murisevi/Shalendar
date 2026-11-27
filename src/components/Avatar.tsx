@@ -1,4 +1,5 @@
 import type { Participant } from '../../shared/types';
+import { useI18n } from '../lib/i18n';
 
 interface AvatarProps {
   participant: Pick<Participant, 'name' | 'avatarColor' | 'avatarEmoji'>;
@@ -24,10 +25,12 @@ export function Avatar({
   required = false,
   className = '',
 }: AvatarProps) {
+  const { t } = useI18n();
+
   return (
     <span className={`relative inline-flex shrink-0 ${className}`}>
       <span
-        title={`${participant.name}${online ? ' · En línea' : ''}${required ? ' · Imprescindible' : ''}`}
+        title={`${participant.name}${online ? t.avatar.onlineSuffix : ''}${required ? t.avatar.requiredSuffix : ''}`}
         style={{ backgroundColor: participant.avatarColor }}
         className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white shadow-xs select-none ${
           SIZE_CLASSES[size]
@@ -39,13 +42,13 @@ export function Avatar({
       </span>
       {online && (
         <span
-          aria-label="En línea"
+          aria-label={t.avatar.onlineAria}
           className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900"
         />
       )}
       {required && !online && (
         <span
-          aria-label="Imprescindible"
+          aria-label={t.avatar.requiredAria}
           className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-400 text-[8px] font-black text-amber-950 ring-1 ring-white dark:ring-slate-900"
         >
           ★

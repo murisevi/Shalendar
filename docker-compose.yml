@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shalendar-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shalendar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shalendar_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-shalendar}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - shalendar_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shalendar} -d ${POSTGRES_DB:-shalendar}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional full-container local run:
+  #   docker compose --profile app up --build
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shalendar-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-shalendar}:${POSTGRES_PASSWORD:-shalendar_dev}@postgres:5432/${POSTGRES_DB:-shalendar}
+      DATABASE_SSL: "false"
+      DEFAULT_RETENTION_POLICY: ${DEFAULT_RETENTION_POLICY:-ephemeral_after_event}
+      DEFAULT_RETENTION_DAYS: ${DEFAULT_RETENTION_DAYS:-30}
+      PURGE_INTERVAL_HOURS: ${PURGE_INTERVAL_HOURS:-12}
+      ALLOW_PUBLIC_DEMO: ${ALLOW_PUBLIC_DEMO:-true}
+    ports:
+      - "${PORT:-3001}:3001"
+
+volumes:
+  shalendar_pgdata:

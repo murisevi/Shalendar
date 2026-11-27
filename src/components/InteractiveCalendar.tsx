@@ -66,6 +66,11 @@ interface InteractiveCalendarProps {
   canUndo: boolean;
   onUndo: () => void;
   onRequireIdentity: () => void;
+  /** Mobile layout: no brush toolbar, tap opens the day, painting only while `paintMode` is on. */
+  mobile?: boolean;
+  paintMode?: boolean;
+  mobileBrush?: AvailabilityStatus;
+  onOpenDay?: (date: string) => void;
 }
 
 function getHeatmapClasses(
@@ -131,11 +136,19 @@ export function InteractiveCalendar({
   canUndo,
   onUndo,
   onRequireIdentity,
+  mobile = false,
+  paintMode = false,
+  mobileBrush = 'yes',
+  onOpenDay,
 }: InteractiveCalendarProps) {
   const { language, t } = useI18n();
-  const [brush, setBrush] = useState<BrushMode>('yes');
+  const [desktopBrush, setBrush] = useState<BrushMode>('yes');
   const [activeSlot, setActiveSlot] = useState<AvailabilitySlot>('all');
   const [onlyMineMode, setOnlyMineMode] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  // On mobile, browsing never paints: the brush is only active inside "Mark my days" mode.
+  const brush: BrushMode = mobile ? (paintMode ? mobileBrush : 'inspect') : desktopBrush;
+  const mobileBrowsing = mobile && !paintMode;
 
   const timeSlots = useMemo(() => getTimeSlots(language), [language]);
   const weekdaysShort = useMemo(() => getWeekdaysShort(language), [language]);
@@ -328,6 +341,7 @@ export function InteractiveCalendar({
   return (
     <div className="space-y-4">
       {/* Brush & Mode Toolbar */}
+      {!mobile && (
       <div className="rounded-2xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-3 sm:p-4 shadow-2xs space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -481,10 +495,159 @@ export function InteractiveCalendar({
           </div>
         </div>
       </div>
+      )}
 
       {/* Main Calendar Card */}
-      <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm">
+      <div
+        className={`rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 shadow-sm ${
+          mobile ? 'p-3' : 'p-4 sm:p-5'
+        }`}
+      >
+        {/* Compact mobile month header: < Month > · Filter · Only me */}
+        {mobile && (
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-0.5">
+              <button
+                type="button"
+                aria-label={t.calendar.prevMonthAria}
+                onClick={() => onChangeMonth(addMonthsISO(currentMonth, -1))}
+                className="flex h-10 w-9 items-center justify-center rounded-xl text-stone-600 dark:text-slate-300 active:bg-stone-100 dark:active:bg-slate-800 cursor-pointer"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeMonth(todayISO.slice(0, 7))}
+                title={t.calendar.today}
+                className="min-w-0 truncate px-1 font-display text-base font-extrabold tracking-tight first-letter:uppercase cursor-pointer"
+              >
+                {getMonthLabel(currentMonth, language)}
+              </button>
+              <button
+                type="button"
+                aria-label={t.calendar.nextMonthAria}
+                onClick={() => onChangeMonth(addMonthsISO(currentMonth, 1))}
+                className="flex h-10 w-9 items-center justify-center rounded-xl text-stone-600 dark:text-slate-300 active:bg-stone-100 dark:active:bg-slate-800 cursor-pointer"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {participants.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilterOpen((v) => !v)}
+                  aria-pressed={filterOpen || filterParticipantIds.length > 0}
+                  aria-label={t.mobile.filter}
+                  className={`inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition cursor-pointer ${
+                    filterOpen || filterParticipantIds.length > 0
+                      ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                      : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+                  }`}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  <span className="hidden min-[430px]:inline">{t.mobile.filter}</span>
+                  {filterParticipantIds.length > 0 && (
+                    <span className="tabular-nums">· {filterParticipantIds.length}</span>
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setOnlyMineMode((v) => !v)}
+                aria-pressed={onlyMineMode}
+                className={`inline-flex h-8 items-center rounded-full border px-2.5 text-xs font-semibold transition cursor-pointer ${
+                  onlyMineMode
+                    ? 'border-teal-500 bg-teal-600 text-white'
+                    : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+                }`}
+              >
+                {t.mobile.onlyMe}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Mobile friend filter strip (horizontal scroll) */}
+        {mobile && participants.length > 0 && (filterOpen || filterParticipantIds.length > 0) && (
+          <div className="-mx-3 mb-2.5 flex gap-1.5 overflow-x-auto no-scrollbar px-3 pb-0.5 animate-fade-in">
+            {filterParticipantIds.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearFilters}
+                className="shrink-0 rounded-full border border-stone-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-teal-700 dark:text-teal-300 cursor-pointer"
+              >
+                {t.calendar.showAllGroup}
+              </button>
+            )}
+            {participants.map((p) => {
+              const active = filterParticipantIds.includes(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onToggleFilterParticipant(p.id)}
+                  aria-pressed={active}
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border pl-1 pr-3 py-1 text-xs font-medium transition cursor-pointer ${
+                    active
+                      ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-900 dark:text-teal-100'
+                      : 'border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/60 text-stone-700 dark:text-slate-300'
+                  }`}
+                >
+                  <Avatar
+                    participant={p}
+                    size="xs"
+                    online={onlineParticipantIds.has(p.id)}
+                    required={requiredSet.has(p.id)}
+                  />
+                  <span className="max-w-[90px] truncate">{p.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Mobile paint-mode extras: time slot + quick bulk actions */}
+        {mobile && paintMode && (
+          <div className="-mx-3 mb-2.5 flex gap-1.5 overflow-x-auto no-scrollbar px-3 animate-fade-in">
+            {granularity === 'slots' &&
+              [{ id: 'all' as const, label: t.calendar.allDaySlots, emoji: '' }, ...timeSlots].map(
+                (slot) => (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    onClick={() => setActiveSlot(slot.id)}
+                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      activeSlot === slot.id
+                        ? 'border-teal-500 bg-teal-600 text-white'
+                        : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {slot.emoji ? `${slot.emoji} ` : ''}
+                    {slot.label}
+                  </button>
+                )
+              )}
+            <button
+              type="button"
+              onClick={handlePaintWeekends}
+              className="shrink-0 rounded-full bg-stone-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200 cursor-pointer"
+            >
+              {t.calendar.markWeekends}
+            </button>
+            <button
+              type="button"
+              onClick={handleClearCurrentMonth}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200 cursor-pointer"
+            >
+              <Trash2 className="h-3 w-3" />
+              {t.calendar.clearMonth}
+            </button>
+          </div>
+        )}
+
         {/* Month Header */}
+        {!mobile && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -534,10 +697,21 @@ export function InteractiveCalendar({
             </div>
           </div>
         </div>
+        )}
 
         {/* Interactive Weekday Headers (click to paint entire weekday column!) */}
-        <div className="grid grid-cols-7 gap-1.5 sm:gap-2 mb-1.5">
-          {weekdaysShort.map((wd, idx) => (
+        <div className={`grid grid-cols-7 mb-1.5 ${mobile ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
+          {weekdaysShort.map((wd, idx) =>
+            mobileBrowsing ? (
+              <span
+                key={`${idx}-${wd}`}
+                className={`text-center text-[10px] font-bold uppercase tracking-wider py-1 ${
+                  idx >= 5 ? 'text-teal-700 dark:text-teal-400' : 'text-stone-400 dark:text-slate-500'
+                }`}
+              >
+                {wd}
+              </span>
+            ) : (
             <button
               key={`${idx}-${wd}`}
               type="button"
@@ -551,14 +725,15 @@ export function InteractiveCalendar({
             >
               {wd}
             </button>
-          ))}
+            )
+          )}
         </div>
 
         {/* Day Grid (supports both mouse and mobile finger drag-painting!) */}
         <div
           ref={gridRef}
           onPointerMove={handleGridPointerMove}
-          className={`grid grid-cols-7 gap-1.5 sm:gap-2 calendar-no-select ${
+          className={`grid grid-cols-7 calendar-no-select ${mobile ? 'gap-1' : 'gap-1.5 sm:gap-2'} ${
             brush !== 'inspect' ? 'touch-none' : ''
           }`}
         >
@@ -619,13 +794,24 @@ export function InteractiveCalendar({
                   voteCount,
                 })}
                 onPointerDown={(e) => {
+                  if (mobileBrowsing) return;
                   if (brush !== 'inspect') e.preventDefault();
                   startCellInteraction(cell.date);
+                }}
+                onClick={() => {
+                  if (!mobileBrowsing) return;
+                  onSelectDate(cell.date);
+                  onOpenDay?.(cell.date);
                 }}
                 onPointerEnter={() => enterCellDuringDrag(cell.date)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
+                    if (mobileBrowsing) {
+                      onSelectDate(cell.date);
+                      onOpenDay?.(cell.date);
+                      return;
+                    }
                     startCellInteraction(cell.date);
                     isDraggingRef.current = false;
                     const pending = dragPreviewRef.current;
@@ -657,7 +843,11 @@ export function InteractiveCalendar({
                     }
                   }
                 }}
-                className={`group relative flex flex-col justify-between rounded-2xl border p-1.5 sm:p-2 min-h-[70px] sm:min-h-[88px] transition-all cursor-pointer ${heatmapClass} ${
+                className={`group relative flex flex-col justify-between border transition-all cursor-pointer ${
+                  mobile
+                    ? 'rounded-xl p-1 min-h-[54px] active:scale-[0.96]'
+                    : 'rounded-2xl p-1.5 sm:p-2 min-h-[70px] sm:min-h-[88px]'
+                } ${heatmapClass} ${
                   !cell.inCurrentMonth ? 'opacity-40' : ''
                 } ${
                   cell.isPast && !hasAny && !effectiveMyStatus ? 'opacity-55' : ''
@@ -700,7 +890,7 @@ export function InteractiveCalendar({
                         className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"
                       />
                     )}
-                    {summary?.hasNotes && (
+                    {summary?.hasNotes && !mobile && (
                       <span title={t.calendar.hasNotesTitle} className="shrink-0">
                         <MessageSquareText
                           className={`h-3 w-3 ${
@@ -720,7 +910,9 @@ export function InteractiveCalendar({
                             ? t.calendar.myStatusMaybe
                             : t.calendar.myStatusNo
                       }
-                      className={`flex h-4.5 w-4.5 sm:h-5 sm:w-5 items-center justify-center rounded-full text-[10px] font-bold shadow-2xs ring-1 ring-white/80 dark:ring-slate-900/80 shrink-0 ${
+                      className={`flex items-center justify-center rounded-full font-bold shadow-2xs ring-1 ring-white/80 dark:ring-slate-900/80 shrink-0 ${
+                        mobile ? 'h-3.5 w-3.5 text-[8px]' : 'h-4.5 w-4.5 sm:h-5 sm:w-5 text-[10px]'
+                      } ${
                         effectiveMyStatus === 'yes'
                           ? 'bg-emerald-600 text-white'
                           : effectiveMyStatus === 'maybe'
@@ -779,7 +971,7 @@ export function InteractiveCalendar({
                 ) : null}
 
                 {/* Bottom row: Friend dots + consensus count + vote star */}
-                <div className="mt-auto pt-0.5 flex items-end justify-between gap-1">
+                <div className={`mt-auto pt-0.5 flex items-end justify-between ${mobile ? 'gap-0.5' : 'gap-1'}`}>
                   {!onlyMineMode && summary && (yesCount > 0 || maybeCount > 0) ? (
                     <div className="flex items-center gap-1 min-w-0">
                       <div className="hidden sm:flex items-center -space-x-1">
@@ -816,7 +1008,18 @@ export function InteractiveCalendar({
                     <span />
                   )}
 
-                  {voteCount > 0 && (
+                  {voteCount > 0 && mobile && (
+                    <span
+                      title={t.common.votes(voteCount)}
+                      className={`inline-flex shrink-0 items-center gap-px text-[10px] font-extrabold leading-none tabular-nums ${
+                        isHighContrastBg ? 'text-amber-200' : 'text-amber-600 dark:text-amber-400'
+                      }`}
+                    >
+                      <Star className="h-2 w-2 fill-current" />
+                      {voteCount}
+                    </span>
+                  )}
+                  {voteCount > 0 && !mobile && (
                     <span
                       title={t.common.votes(voteCount)}
                       className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${
@@ -836,7 +1039,11 @@ export function InteractiveCalendar({
         </div>
 
         {/* Legend Row */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 dark:border-slate-800 pt-3 text-[11px] text-stone-500 dark:text-slate-400">
+        <div
+          className={`flex flex-wrap items-center justify-between border-t border-stone-100 dark:border-slate-800 text-stone-500 dark:text-slate-400 ${
+            mobile ? 'mt-3 gap-x-3 gap-y-1.5 pt-2.5 text-[10px]' : 'mt-4 gap-3 pt-3 text-[11px]'
+          }`}
+        >
           <div className="flex items-center gap-2">
             <span>{t.calendar.legendLess}</span>
             <div className="flex items-center gap-1">
@@ -875,7 +1082,7 @@ export function InteractiveCalendar({
       </div>
 
       {/* Friend Intersection Filter Bar */}
-      {participants.length > 0 && (
+      {participants.length > 0 && !mobile && (
         <div className="rounded-2xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-3.5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200">

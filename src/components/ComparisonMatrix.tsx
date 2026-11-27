@@ -78,7 +78,7 @@ export function ComparisonMatrix({
   }
 
   return (
-    <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
+    <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 shadow-sm space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="font-display text-lg font-extrabold tracking-tight">
@@ -105,7 +105,7 @@ export function ComparisonMatrix({
         <table className="w-full border-separate border-spacing-1.5 text-left">
           <thead>
             <tr>
-              <th className="min-w-[140px] py-2 pl-2 text-xs font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500">
+              <th className="sticky left-0 z-10 bg-white dark:bg-slate-900 shadow-[-6px_0_0_0_#fff,6px_0_0_0_#fff] dark:shadow-[-6px_0_0_0_#0f172a,6px_0_0_0_#0f172a] min-w-[112px] sm:min-w-[140px] py-2 pl-2 text-xs font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500">
                 {t.matrix.friendHeader}
               </th>
               {columns.map((col) => {
@@ -113,7 +113,7 @@ export function ComparisonMatrix({
                 const isConfirmed = confirmedDate === col.date;
                 const isSel = selectedDate === col.date;
                 return (
-                  <th key={col.date} className="min-w-[68px] p-0 text-center">
+                  <th key={col.date} className="min-w-[60px] sm:min-w-[68px] p-0 text-center">
                     <button
                       type="button"
                       onClick={() => onSelectDate(col.date)}
@@ -147,21 +147,21 @@ export function ComparisonMatrix({
               const isMeRow = me?.id === p.id;
               return (
                 <tr key={p.id}>
-                  <td
-                    className={`rounded-xl px-2.5 py-2 ${
-                      isMeRow
-                        ? 'bg-teal-50/80 dark:bg-teal-950/40 ring-1 ring-teal-300/70 dark:ring-teal-800'
-                        : 'bg-stone-50/80 dark:bg-slate-800/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
+                  <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 shadow-[-6px_0_0_0_#fff,6px_0_0_0_#fff] dark:shadow-[-6px_0_0_0_#0f172a,6px_0_0_0_#0f172a] p-0">
+                    <div
+                      className={`flex h-10 items-center gap-2 rounded-xl px-2.5 ${
+                        isMeRow
+                          ? 'bg-teal-50/80 dark:bg-teal-950/40 ring-1 ring-teal-300/70 dark:ring-teal-800'
+                          : 'bg-stone-50/80 dark:bg-slate-800/40'
+                      }`}
+                    >
                       <Avatar
                         participant={p}
                         size="xs"
                         online={onlineParticipantIds.has(p.id)}
                         required={requiredSet.has(p.id)}
                       />
-                      <span className="text-xs font-semibold truncate max-w-[100px]">
+                      <span className="text-xs font-semibold truncate max-w-[64px] sm:max-w-[100px]">
                         {p.name}
                       </span>
                       {isMeRow && (
@@ -232,7 +232,7 @@ export function ComparisonMatrix({
 
             {/* Summary Footer Row */}
             <tr>
-              <td className="px-2.5 pt-2 text-xs font-bold text-stone-600 dark:text-slate-300">
+              <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 shadow-[-6px_0_0_0_#fff,6px_0_0_0_#fff] dark:shadow-[-6px_0_0_0_#0f172a,6px_0_0_0_#0f172a] px-2.5 pt-2 text-xs font-bold text-stone-600 dark:text-slate-300">
                 {t.matrix.totalAndVotes}
               </td>
               {columns.map((col) => {

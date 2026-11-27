@@ -157,7 +157,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
       />
 
       {/* Header */}
-      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-4 py-5 sm:px-6">
+      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 sm:py-5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 text-white shadow-sm shadow-teal-600/20">
             <CalendarHeart className="h-5 w-5" />
@@ -190,24 +190,26 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto max-w-6xl px-4 pt-4 pb-20 sm:px-6 lg:pt-10">
-        <div className="grid items-start gap-10 lg:grid-cols-12 lg:gap-12">
-          {/* Left Hero Column */}
-          <div className="lg:col-span-6 lg:pt-4 space-y-6 animate-fade-up">
-            <h1 className="font-display text-4xl font-extrabold tracking-tight text-stone-900 dark:text-white sm:text-5xl leading-[1.1]">
+      <main className="relative z-10 mx-auto max-w-6xl px-4 pt-2 pb-[max(5rem,env(safe-area-inset-bottom))] sm:px-6 sm:pt-4 lg:pt-10">
+        <div className="grid items-start gap-6 sm:gap-8 lg:grid-cols-12 lg:gap-12">
+          {/* Left Hero Column — on mobile its children flow into the grid so the form comes first ("action-first") */}
+          <div className="contents lg:block lg:col-span-6 lg:pt-4 lg:space-y-6 animate-fade-up">
+            <div className="order-1 min-w-0 space-y-3 sm:space-y-6">
+            <h1 className="font-display text-[2rem] font-extrabold tracking-tight text-stone-900 dark:text-white sm:text-5xl leading-[1.1]">
               {t.home.heroTitleLead}
               <span className="bg-gradient-to-r from-teal-600 via-emerald-600 to-teal-500 bg-clip-text text-transparent">
                 {t.home.heroTitleHighlight}
               </span>
             </h1>
 
-            <p className="text-base sm:text-lg text-stone-600 dark:text-slate-300 leading-relaxed max-w-xl">
+            <p className="text-[15px] sm:text-lg text-stone-600 dark:text-slate-300 leading-relaxed max-w-xl">
               {t.home.heroSubtitle}
             </p>
+            </div>
 
-            {/* 3 Visual Value Pills */}
-            <div className="grid gap-3 sm:grid-cols-3 pt-2">
-              <div className="rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
+            {/* 3 Visual Value Pills (horizontal carousel on phones) */}
+            <div className="order-4 min-w-0 -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto no-scrollbar px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:pt-2">
+              <div className="w-[72%] shrink-0 snap-start sm:w-auto rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
                   <CalendarHeart className="h-4.5 w-4.5" />
                 </div>
@@ -217,7 +219,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
+              <div className="w-[72%] shrink-0 snap-start sm:w-auto rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300">
                   <Vote className="h-4.5 w-4.5" />
                 </div>
@@ -227,7 +229,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
+              <div className="w-[72%] shrink-0 snap-start sm:w-auto rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow-2xs">
                 <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">
                   <Users className="h-4.5 w-4.5" />
                 </div>
@@ -240,8 +242,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
 
             {/* Live Demo Callout */}
             {demoPlan && (
-              <div className="rounded-2xl border border-teal-200/80 dark:border-teal-800/50 bg-gradient-to-br from-teal-50/90 to-emerald-50/50 dark:from-teal-950/40 dark:to-slate-900/70 p-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5 min-w-0">
+              <div className="order-3 min-w-0 rounded-2xl border border-teal-200/80 dark:border-teal-800/50 bg-gradient-to-br from-teal-50/90 to-emerald-50/50 dark:from-teal-950/40 dark:to-slate-900/70 p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white dark:bg-slate-800 text-2xl shadow-xs">
                     {demoPlan.emoji}
                   </span>
@@ -260,7 +262,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 <button
                   type="button"
                   onClick={() => onOpenPlan(demoPlan.slug)}
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 px-3.5 py-2 text-sm font-semibold text-white shadow-xs transition cursor-pointer"
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 px-3 sm:px-3.5 py-2 text-sm font-semibold text-white shadow-xs transition cursor-pointer"
                 >
                   {t.home.demoExplore}
                   <ArrowRight className="h-4 w-4" />
@@ -270,13 +272,13 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
           </div>
 
           {/* Right Column — Create Form Card */}
-          <div className="lg:col-span-6 animate-fade-up">
+          <div className="order-2 min-w-0 lg:col-span-6 animate-fade-up">
             <form
               onSubmit={handleCreate}
-              className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-6 sm:p-8 shadow-xl shadow-stone-900/5 dark:shadow-black/30 space-y-5"
+              className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-5 sm:p-8 shadow-xl shadow-stone-900/5 dark:shadow-black/30 space-y-5"
             >
               <div>
-                <h2 className="font-display text-2xl font-bold tracking-tight">
+                <h2 className="font-display text-xl sm:text-2xl font-bold tracking-tight">
                   {t.home.formTitle}
                 </h2>
                 <p className="mt-1 text-sm text-stone-500 dark:text-slate-400">
@@ -289,13 +291,14 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 <label className="block text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-slate-400 mb-2">
                   {t.home.planIconLabel}
                 </label>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="-mx-5 flex gap-1.5 overflow-x-auto no-scrollbar px-5 py-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:py-0">
                   {PLAN_EMOJIS.map((item) => (
                     <button
                       key={item}
                       type="button"
                       onClick={() => setEmoji(item)}
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl text-xl transition cursor-pointer ${
+                      aria-pressed={emoji === item}
+                      className={`flex h-11 w-11 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl text-xl transition cursor-pointer ${
                         emoji === item
                           ? 'bg-teal-100 dark:bg-teal-900/70 ring-2 ring-teal-500 scale-105'
                           : 'bg-stone-100/80 dark:bg-slate-800 hover:bg-stone-200/80 dark:hover:bg-slate-700'

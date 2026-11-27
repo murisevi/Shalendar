@@ -49,6 +49,8 @@ interface DayInspectorProps {
   onToggleVote: (date: string) => void;
   onAddComment: (date: string, body: string) => void;
   onRequireIdentity: () => void;
+  /** `sheet` renders without card chrome and with larger touch targets (mobile bottom sheet). */
+  variant?: 'card' | 'sheet';
 }
 
 export function DayInspector({
@@ -69,8 +71,12 @@ export function DayInspector({
   onToggleVote,
   onAddComment,
   onRequireIdentity,
+  variant = 'card',
 }: DayInspectorProps) {
   const { language, t } = useI18n();
+  const isSheet = variant === 'sheet';
+  const statusBtnSize = isSheet ? 'py-3 text-sm rounded-2xl' : 'py-2 text-xs rounded-xl';
+  const fieldSize = isSheet ? 'py-2.5 text-sm' : 'py-1.5 text-xs';
   const [noteInput, setNoteInput] = useState('');
   const [personalNoteDraft, setPersonalNoteDraft] = useState(myNote);
 
@@ -157,14 +163,20 @@ export function DayInspector({
   }
 
   return (
-    <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4 animate-pop">
+    <div
+      className={
+        isSheet
+          ? 'space-y-4 pb-2'
+          : 'rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4 animate-pop'
+      }
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
             {t.inspector.dayDetailEyebrow}
           </p>
-          <h3 className="font-display text-lg font-extrabold tracking-tight">
+          <h3 className={`font-display font-extrabold tracking-tight ${isSheet ? 'text-xl first-letter:uppercase' : 'text-lg'}`}>
             {formatDateLong(date, language)}
           </h3>
           {holiday && (
@@ -184,7 +196,9 @@ export function DayInspector({
             }
             onToggleVote(date);
           }}
-          className={`inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold transition cursor-pointer disabled:opacity-50 ${
+          className={`inline-flex shrink-0 items-center gap-1 border font-bold transition cursor-pointer disabled:opacity-50 ${
+            isSheet ? 'rounded-2xl px-3.5 py-2.5 text-sm' : 'rounded-xl px-3 py-1.5 text-xs'
+          } ${
             hasVoted
               ? 'border-amber-400 bg-amber-400 text-amber-950 shadow-xs'
               : 'border-stone-200 dark:border-slate-700 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
@@ -209,19 +223,19 @@ export function DayInspector({
           <button
             type="button"
             onClick={() => handleQuickStatus('yes')}
-            className={`inline-flex items-center justify-center gap-1 rounded-xl border py-2 text-xs font-bold transition cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
               myStatus === 'yes'
                 ? 'border-emerald-600 bg-emerald-600 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-stone-700 dark:text-slate-200'
             }`}
           >
-            <Check className="h-3.5 w-3.5" />
+            <Check className={isSheet ? "h-4 w-4" : "h-3.5 w-3.5"} />
             {t.inspector.yesBtn}
           </button>
           <button
             type="button"
             onClick={() => handleQuickStatus('maybe')}
-            className={`inline-flex items-center justify-center gap-1 rounded-xl border py-2 text-xs font-bold transition cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
               myStatus === 'maybe'
                 ? 'border-amber-500 bg-amber-500 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-amber-50 dark:hover:bg-amber-950/50 text-stone-700 dark:text-slate-200'
@@ -233,7 +247,7 @@ export function DayInspector({
           <button
             type="button"
             onClick={() => handleQuickStatus('no')}
-            className={`inline-flex items-center justify-center gap-1 rounded-xl border py-2 text-xs font-bold transition cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
               myStatus === 'no'
                 ? 'border-rose-500 bg-rose-500 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-stone-700 dark:text-slate-200'
@@ -298,7 +312,7 @@ export function DayInspector({
               value={personalNoteDraft}
               onChange={(e) => setPersonalNoteDraft(e.target.value)}
               placeholder={t.inspector.personalNotePlaceholder}
-              className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-teal-500 transition"
+              className={`w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 pl-8 pr-3 ${fieldSize} outline-none focus:border-teal-500 transition`}
             />
           </div>
           {personalNoteDraft !== myNote && (
@@ -411,13 +425,13 @@ export function DayInspector({
             value={noteInput}
             onChange={(e) => setNoteInput(e.target.value)}
             placeholder={t.inspector.dayCommentPlaceholder}
-            className="flex-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-1.5 text-xs outline-none focus:border-teal-500 transition"
+            className={`min-w-0 flex-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 ${fieldSize} outline-none focus:border-teal-500 transition`}
           />
           <button
             type="submit"
             disabled={!noteInput.trim()}
             aria-label={t.inspector.sendCommentAria}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white transition cursor-pointer"
+            className={`flex shrink-0 items-center justify-center rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white transition cursor-pointer ${isSheet ? 'h-10 w-10' : 'h-8 w-8'}`}
           >
             <Send className="h-3.5 w-3.5" />
           </button>

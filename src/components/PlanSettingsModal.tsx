@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   Check,
+  Clock,
   Copy,
   Crown,
+  Database,
+  Download,
   EyeOff,
   Save,
   Settings,
@@ -15,10 +18,12 @@ import type {
   Participant,
   Plan,
   PlanGranularity,
+  RetentionPolicy,
   UpdatePlanSettingsRequest,
 } from '../../shared/types';
 import { PLAN_EMOJIS } from '../../shared/dates';
 import { HOLIDAY_COUNTRIES } from '../../shared/holidays';
+import { getRemainingDays, RETENTION_PRESETS } from '../../shared/persistence';
 import { buildCoOrganizerUrl } from '../lib/storage';
 import { Avatar } from './Avatar';
 
@@ -28,6 +33,8 @@ interface PlanSettingsModalProps {
   plan: Plan;
   participants: Participant[];
   onSave: (updates: UpdatePlanSettingsRequest) => Promise<void>;
+  onExtendExpiration: (extraDays?: number) => Promise<void>;
+  onExportBackup: () => void;
   onRemoveParticipant: (participantId: string) => Promise<void>;
   onDeletePlan: () => Promise<void>;
 }
@@ -46,6 +53,8 @@ export function PlanSettingsModal({
   plan,
   participants,
   onSave,
+  onExtendExpiration,
+  onExportBackup,
   onRemoveParticipant,
   onDeletePlan,
 }: PlanSettingsModalProps) {
@@ -60,7 +69,10 @@ export function PlanSettingsModal({
   const [blindVoting, setBlindVoting] = useState(plan.blindVoting);
   const [votingDeadline, setVotingDeadline] = useState(isoToDatetimeLocal(plan.votingDeadline));
   const [requiredIds, setRequiredIds] = useState<string[]>(plan.requiredParticipantIds);
+  const [retentionPolicy, setRetentionPolicy] = useState<RetentionPolicy>(plan.retentionPolicy);
+  const [retentionDays, setRetentionDays] = useState<number>(plan.retentionDays);
   const [saving, setSaving] = useState(false);
+  const [extending, setExtending] = useState(false);
   const [copiedCoAdmin, setCopiedCoAdmin] = useState(false);
 
   useEffect(() => {
@@ -76,6 +88,8 @@ export function PlanSettingsModal({
     setBlindVoting(plan.blindVoting);
     setVotingDeadline(isoToDatetimeLocal(plan.votingDeadline));
     setRequiredIds(plan.requiredParticipantIds);
+    setRetentionPolicy(plan.retentionPolicy);
+    setRetentionDays(plan.retentionDays);
   }, [open, plan]);
 
   if (!open) return null;
@@ -103,6 +117,8 @@ export function PlanSettingsModal({
         blindVoting,
         votingDeadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
         requiredParticipantIds: requiredIds,
+        retentionPolicy,
+        retentionDays,
       });
       onClose();
     } finally {
@@ -300,6 +316,87 @@ export function PlanSettingsModal({
             <EyeOff className="h-4 w-4 text-amber-600 shrink-0" />
             <span>Voto oculto (esconde los votos de los demás hasta cerrar votación)</span>
           </label>
+
+          {/* Adaptive Persistence / Retention Controls */}
+          <div className="space-y-2.5 rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-stone-50/60 dark:bg-slate-800/35 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-stone-700 dark:text-slate-200">
+                <Database className="h-3.5 w-3.5 text-teal-600" />
+                Memoria y caducidad
+              </span>
+              {(() => {
+                const rem = getRemainingDays(plan.expiresAt);
+                return rem !== null ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+                    <Clock className="h-3 w-3" />
+                    Auto-borrado en {rem} {rem === 1 ? 'día' : 'días'}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-200">
+                    Sin caducidad automática
+                  </span>
+                );
+              })()}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              {RETENTION_PRESETS.map((preset) => {
+                const selected =
+                  retentionPolicy === preset.policy &&
+                  (preset.policy !== 'fixed_ttl' || retentionDays === preset.retentionDays);
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      setRetentionPolicy(preset.policy);
+                      setRetentionDays(preset.retentionDays);
+                    }}
+                    className={`rounded-xl px-2 py-2 text-xs font-semibold border transition cursor-pointer ${
+                      selected
+                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                        : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {preset.shortLabel}
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="text-[11px] text-stone-500 dark:text-slate-400">
+              {RETENTION_PRESETS.find((p) => p.policy === retentionPolicy)?.description}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {plan.expiresAt && (
+                <button
+                  type="button"
+                  disabled={extending}
+                  onClick={async () => {
+                    setExtending(true);
+                    try {
+                      await onExtendExpiration(30);
+                    } finally {
+                      setExtending(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 dark:border-teal-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/50 transition cursor-pointer disabled:opacity-50"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  {extending ? 'Extendiendo...' : 'Extender +30 días'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onExportBackup}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200 hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Exportar copia (.json)
+              </button>
+            </div>
+          </div>
 
           {/* Required attendees & participant management */}
           <div className="space-y-2 border-t border-stone-100 dark:border-slate-800 pt-4">

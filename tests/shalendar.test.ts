@@ -392,4 +392,105 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
     expect(snap!.carpools.length).toBeGreaterThanOrEqual(1);
     db.close();
   });
+
+  it('supports adaptive retention policies, extension, JSON export, health check, and 410 expiration', async () => {
+    const db = new ShalendarDB(':memory:');
+    const hub = new PlanEventHub();
+    const app = createApp(db, hub, undefined, { purgeCronSecret: 'cron-secret-123' });
+
+    // Healthcheck reports driver & latency
+    const healthRes = await app.request('/api/health');
+    expect(healthRes.status).toBe(200);
+    const health = (await healthRes.json()) as { ok: boolean; driver: string; latencyMs: number };
+    expect(health.ok).toBe(true);
+    expect(health.driver).toBe('sqlite');
+
+    // Create an ephemeral fixed_ttl plan (7 days)
+    const createRes = await app.request('/api/plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Quedada exprés',
+        organizerName: 'Nuria',
+        retentionPolicy: 'fixed_ttl',
+        retentionDays: 7,
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as {
+      plan: { slug: string; retentionPolicy: string; retentionDays: number; expiresAt: string | null };
+      adminToken: string;
+    };
+    const slug = created.plan.slug;
+    expect(created.plan.retentionPolicy).toBe('fixed_ttl');
+    expect(created.plan.retentionDays).toBe(7);
+    expect(created.plan.expiresAt).not.toBeNull();
+
+    // Extend expiration requires admin token
+    const unauthExtend = await app.request(`/api/plans/${slug}/extend`, { method: 'POST' });
+    expect(unauthExtend.status).toBe(403);
+
+    const extRes = await app.request(`/api/plans/${slug}/extend`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': created.adminToken,
+      },
+      body: JSON.stringify({ extraDays: 30 }),
+    });
+    expect(extRes.status).toBe(200);
+    const extended = (await extRes.json()) as { plan: { expiresAt: string } };
+    expect(Date.parse(extended.plan.expiresAt)).toBeGreaterThan(Date.parse(created.plan.expiresAt!));
+
+    // Export portable JSON backup
+    const exportRes = await app.request(`/api/plans/${slug}/export`);
+    expect(exportRes.status).toBe(200);
+    const backup = (await exportRes.json()) as { format: string; snapshot: { plan: { slug: string } } };
+    expect(backup.format).toBe('shalendar-backup-v1');
+    expect(backup.snapshot.plan.slug).toBe(slug);
+
+    // Promote to persistent clears expiresAt
+    const toPersist = await app.request(`/api/plans/${slug}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': created.adminToken,
+      },
+      body: JSON.stringify({ retentionPolicy: 'persistent' }),
+    });
+    expect(toPersist.status).toBe(200);
+    const persisted = (await toPersist.json()) as { plan: { retentionPolicy: string; expiresAt: string | null } };
+    expect(persisted.plan.retentionPolicy).toBe('persistent');
+    expect(persisted.plan.expiresAt).toBeNull();
+
+    // Create a second ephemeral plan and force it expired in DB -> GET returns 410 Gone
+    const expCreate = await app.request('/api/plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Plan caducado',
+        organizerName: 'Pau',
+        retentionPolicy: 'fixed_ttl',
+        retentionDays: 1,
+      }),
+    });
+    const expData = (await expCreate.json()) as { plan: { slug: string } };
+    // Simulate expiration via internal purge date check + lazy 410
+    const future = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    const purged = db.purgeExpiredPlans(future);
+    expect(purged.deletedCount).toBe(1);
+    const afterPurge = await app.request(`/api/plans/${expData.plan.slug}`);
+    expect(afterPurge.status).toBe(404);
+
+    // Internal purge endpoint enforces bearer secret
+    const badCron = await app.request('/api/internal/purge', { method: 'POST' });
+    expect(badCron.status).toBe(401);
+    const okCron = await app.request('/api/internal/purge', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer cron-secret-123' },
+    });
+    expect(okCron.status).toBe(200);
+
+    db.close();
+  });
 });

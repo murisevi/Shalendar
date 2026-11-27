@@ -4,8 +4,12 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { z } from 'zod';
-import { ShalendarDB } from './db.js';
+import type { ShalendarDB } from './db.js';
 import { PlanEventHub } from './events.js';
+import type { ShalendarStore } from './store.js';
+import { asShalendarStore } from './persistence/sqlite-store.js';
+import { PlanExpiredError } from './persistence/repository.js';
+import { InMemoryRateLimiter } from './persistence/security.js';
 import {
   computeDaySummaries,
   formatDateLongEs,
@@ -15,6 +19,12 @@ import {
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 const isoMonthRegex = /^\d{4}-\d{2}$/;
+const retentionPolicyEnum = z.enum([
+  'ephemeral_after_event',
+  'fixed_ttl',
+  'sliding_inactivity',
+  'persistent',
+]);
 
 const createPlanSchema = z.object({
   title: z.string().trim().min(2, 'Escribe un título de al menos 2 caracteres').max(80),
@@ -33,10 +43,16 @@ const createPlanSchema = z.object({
   votingDeadline: z.string().max(40).nullable().optional(),
   blindVoting: z.boolean().optional(),
   holidayCountry: z.enum(['ES', 'MX', 'AR', 'CO', 'US', 'none']).optional(),
+  retentionPolicy: retentionPolicyEnum.optional(),
+  retentionDays: z.number().int().min(0).max(365).optional(),
 });
 
 const lookupPlansSchema = z.object({
   slugs: z.array(z.string().min(1).max(80)).max(20),
+});
+
+const extendExpirationSchema = z.object({
+  extraDays: z.number().int().min(1).max(365).optional(),
 });
 
 const joinPlanSchema = z.object({
@@ -114,6 +130,8 @@ const updateSettingsSchema = z.object({
     .optional(),
   confirmedDurationMinutes: z.number().int().min(30).max(1440).optional(),
   confirmedTimezone: z.string().max(64).nullable().optional(),
+  retentionPolicy: retentionPolicyEnum.optional(),
+  retentionDays: z.number().int().min(0).max(365).optional(),
 });
 
 const setRsvpSchema = z.object({
@@ -179,6 +197,11 @@ const toggleCarpoolSeatSchema = z.object({
   participantId: z.string().min(1),
 });
 
+export interface CreateAppOptions {
+  purgeCronSecret?: string | null;
+  maxPlansPerHourPerIp?: number;
+}
+
 function escapeHtmlAttr(str: string): string {
   return str
     .replace(/&/g, '&amp;')
@@ -224,8 +247,33 @@ function buildOgSvg(params: {
 </svg>`;
 }
 
-export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?: string) {
+function getClientIp(req: { header: (k: string) => string | undefined }): string {
+  const xff = req.header('x-forwarded-for');
+  if (xff) return xff.split(',')[0].trim();
+  return req.header('x-real-ip') ?? 'local';
+}
+
+export function createApp(
+  dbOrStore: ShalendarStore | ShalendarDB,
+  hub = new PlanEventHub(),
+  staticDir?: string,
+  options: CreateAppOptions = {}
+) {
+  const store = asShalendarStore(dbOrStore);
   const app = new Hono();
+  const planCreationLimiter = new InMemoryRateLimiter(
+    options.maxPlansPerHourPerIp ?? 30,
+    60 * 60 * 1000
+  );
+
+  // Global error mapping (including 410 Gone for expired ephemeral plans)
+  app.onError((err, c) => {
+    if (err instanceof PlanExpiredError) {
+      return c.json({ error: err.message, expired: true }, 410);
+    }
+    console.error('[shalendar:api]', err);
+    return c.json({ error: 'Error interno del servidor' }, 500);
+  });
 
   // Prevent search engines from indexing private plan URLs or API responses
   app.use('/api/plans/*', async (c, next) => {
@@ -233,28 +281,58 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     c.header('X-Robots-Tag', 'noindex, nofollow');
   });
 
-  const getViewerId = (c: { req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined } }, planId: string): string | null => {
+  const getViewerId = async (
+    c: { req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined } },
+    planId: string
+  ): Promise<string | null> => {
     const token = c.req.header('x-participant-token') ?? c.req.query('participantToken');
     if (token) {
-      const p = db.getParticipantByToken(planId, token);
+      const p = await store.getParticipantByToken(planId, token);
       if (p) return p.id;
     }
     return c.req.header('x-participant-id') ?? c.req.query('participantId') ?? null;
   };
 
-  const broadcast = (slug: string, viewerParticipantId: string | null = null) => {
+  const broadcast = async (slug: string, viewerParticipantId: string | null = null) => {
     hub.notifyUpdate(slug);
-    return db.getPlanSnapshotBySlug(slug, {
+    return store.getPlanSnapshotBySlug(slug, {
       viewerParticipantId,
       onlineParticipantIds: hub.getOnlineParticipantIds(slug),
     });
   };
 
-  app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));
+  // Readiness & liveness healthcheck (verifies DB connectivity for Northflank / Docker)
+  app.get('/api/health', async (c) => {
+    const health = await store.checkHealth();
+    return c.json(
+      {
+        ok: health.ok,
+        driver: health.driver,
+        latencyMs: health.latencyMs,
+        ...(health.error ? { error: health.error } : {}),
+        time: new Date().toISOString(),
+      },
+      health.ok ? 200 : 503
+    );
+  });
+
+  // Optional internal purge trigger for external PaaS Cron Jobs (e.g. Northflank Cron)
+  app.post('/api/internal/purge', async (c) => {
+    const expectedSecret = options.purgeCronSecret;
+    if (!expectedSecret) {
+      return c.json({ error: 'Endpoint desactivado' }, 404);
+    }
+    const auth = c.req.header('authorization') ?? '';
+    if (auth !== `Bearer ${expectedSecret}`) {
+      return c.json({ error: 'No autorizado' }, 401);
+    }
+    const summary = await store.purgeExpiredPlans();
+    return c.json(summary);
+  });
 
   // Only returns explicitly public demo plans (never leaks private plans)
-  app.get('/api/plans', (c) => {
-    return c.json({ plans: db.listPublicPlans(6) });
+  app.get('/api/plans', async (c) => {
+    return c.json({ plans: await store.listPublicPlans(6) });
   });
 
   // Safe batch lookup for the user's own locally remembered slugs
@@ -264,52 +342,93 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     if (!parsed.success) {
       return c.json({ error: 'Slugs inválidos' }, 400);
     }
-    return c.json({ plans: db.lookupPlansBySlugs(parsed.data.slugs) });
+    return c.json({ plans: await store.lookupPlansBySlugs(parsed.data.slugs) });
   });
 
   app.post('/api/plans', async (c) => {
+    const limit = planCreationLimiter.check(getClientIp(c.req));
+    if (!limit.allowed) {
+      c.header('Retry-After', String(limit.retryAfterSeconds));
+      return c.json(
+        { error: 'Has creado demasiadas quedadas en poco tiempo. Espera unos minutos.' },
+        429
+      );
+    }
+
     const body = await c.req.json().catch(() => null);
     const parsed = createPlanSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: parsed.error.issues[0]?.message || 'Datos inválidos' },
-        400
-      );
+      return c.json({ error: parsed.error.issues[0]?.message || 'Datos inválidos' }, 400);
     }
-    const created = db.createPlan(parsed.data);
+    const created = await store.createPlan(parsed.data);
     return c.json(created, 201);
   });
 
-  app.get('/api/plans/:slug', (c) => {
+  app.get('/api/plans/:slug', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) {
       return c.json({ error: 'No encontramos esa quedada' }, 404);
     }
-    const viewerId = getViewerId(c, String(planRow.id));
-    const snapshot = db.getPlanSnapshotBySlug(slug, {
+    const viewerId = await getViewerId(c, planRow.id);
+    const snapshot = await store.getPlanSnapshotBySlug(slug, {
       viewerParticipantId: viewerId,
       onlineParticipantIds: hub.getOnlineParticipantIds(slug),
     });
     return c.json(snapshot);
   });
 
-  // Resolve a participant session from X-Participant-Token (used for cross-device magic transfer)
-  app.get('/api/plans/:slug/session', (c) => {
+  // Portable JSON backup download (adapts to ephemeral & persistent plans alike)
+  app.get('/api/plans/:slug/export', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const backup = await store.exportPlanBackup(slug);
+    if (!backup) {
+      return c.json({ error: 'No encontramos esa quedada' }, 404);
+    }
+    return c.body(JSON.stringify(backup, null, 2), 200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${slug.replace(/[^a-z0-9-_]/gi, '_')}-backup.json"`,
+    });
+  });
+
+  // Extend expiration of an ephemeral/sliding plan (admin-protected)
+  app.post('/api/plans/:slug/extend', async (c) => {
+    const slug = c.req.param('slug');
+    const planRow = await store.getPlanAuthRowBySlug(slug);
+    if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
+
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+      return c.json({ error: 'Solo el organizador puede extender la duración de esta quedada' }, 403);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = extendExpirationSchema.safeParse(body ?? {});
+    if (!parsed.success) {
+      return c.json({ error: 'Días inválidos' }, 400);
+    }
+
+    const updated = await store.extendPlanExpiration(slug, parsed.data.extraDays ?? 30);
+    if (!updated) return c.json({ error: 'Quedada no encontrada' }, 404);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
+    return c.json({ plan: updated, snapshot });
+  });
+
+  // Resolve a participant session from X-Participant-Token (used for cross-device magic transfer)
+  app.get('/api/plans/:slug/session', async (c) => {
+    const slug = c.req.param('slug');
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
     const pToken = c.req.header('x-participant-token') ?? '';
     const aToken = c.req.header('x-admin-token') ?? '';
-    const participant = pToken ? db.getParticipantByToken(String(planRow.id), pToken) : null;
-    const isAdmin = aToken ? db.verifyAdminToken(planRow, aToken) : false;
+    const participant = pToken ? await store.getParticipantByToken(planRow.id, pToken) : null;
+    const isAdmin = aToken ? store.verifyAdminToken(planRow, aToken) : false;
     return c.json({ participant, isAdmin });
   });
 
   // Dynamic Open Graph SVG card for rich WhatsApp/Telegram previews
-  app.get('/api/plans/:slug/og.svg', (c) => {
+  app.get('/api/plans/:slug/og.svg', async (c) => {
     const slug = c.req.param('slug');
-    const snapshot = db.getPlanSnapshotBySlug(slug);
+    const snapshot = await store.getPlanSnapshotBySlug(slug);
     if (!snapshot) return c.text('Not found', 404);
 
     const { plan, participants } = snapshot;
@@ -348,14 +467,18 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     });
   });
 
-  app.get('/api/plans/:slug/stream', (c) => {
+  app.get('/api/plans/:slug/stream', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) {
       return c.json({ error: 'No encontramos esa quedada' }, 404);
     }
-    const viewerId = getViewerId(c, String(planRow.id));
+    const viewerId = await getViewerId(c, planRow.id);
     const sendInitial = c.req.query('skipInitial') !== '1';
+
+    // Disable reverse-proxy response buffering so SSE chunks flush immediately on PaaS edges
+    c.header('X-Accel-Buffering', 'no');
+    c.header('Cache-Control', 'no-cache, no-transform');
 
     return streamSSE(c, async (stream) => {
       let active = true;
@@ -364,15 +487,17 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
         participantId: viewerId,
         onUpdate: (onlineParticipantIds) => {
           if (!active) return;
-          const snap = db.getPlanSnapshotBySlug(slug, {
-            viewerParticipantId: viewerId,
-            onlineParticipantIds,
-          });
-          if (!snap) return;
-          stream
-            .writeSSE({
-              event: 'snapshot',
-              data: JSON.stringify(snap),
+          void store
+            .getPlanSnapshotBySlug(slug, {
+              viewerParticipantId: viewerId,
+              onlineParticipantIds,
+            })
+            .then((snap) => {
+              if (!active || !snap) return;
+              return stream.writeSSE({
+                event: 'snapshot',
+                data: JSON.stringify(snap),
+              });
             })
             .catch(() => {
               active = false;
@@ -392,7 +517,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       });
 
       if (sendInitial) {
-        const initial = db.getPlanSnapshotBySlug(slug, {
+        const initial = await store.getPlanSnapshotBySlug(slug, {
           viewerParticipantId: viewerId,
           onlineParticipantIds: hub.getOnlineParticipantIds(slug),
         });
@@ -427,7 +552,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
 
   app.post('/api/plans/:slug/participants', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -437,11 +562,11 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     }
 
     try {
-      const { participant, participantToken } = db.addOrGetParticipant(String(planRow.id), {
+      const { participant, participantToken } = await store.addOrGetParticipant(planRow.id, {
         ...parsed.data,
         rejectDuplicate: true,
       });
-      const snapshot = broadcast(slug, participant.id);
+      const snapshot = await broadcast(slug, participant.id);
       return c.json({ participant, participantToken, snapshot }, 201);
     } catch (err) {
       return c.json(
@@ -453,7 +578,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
 
   app.post('/api/plans/:slug/participants/claim', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -463,12 +588,12 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     }
 
     try {
-      const { participant, participantToken } = db.claimParticipantByPin(
-        String(planRow.id),
+      const { participant, participantToken } = await store.claimParticipantByPin(
+        planRow.id,
         parsed.data.name,
         parsed.data.pin
       );
-      const snapshot = db.getPlanSnapshotBySlug(slug, {
+      const snapshot = await store.getPlanSnapshotBySlug(slug, {
         viewerParticipantId: participant.id,
         onlineParticipantIds: hub.getOnlineParticipantIds(slug),
       });
@@ -484,17 +609,16 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
   app.patch('/api/plans/:slug/participants/:participantId', async (c) => {
     const slug = c.req.param('slug');
     const participantId = c.req.param('participantId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
-    const hasPartAuth = db.verifyParticipantToken(
-      String(planRow.id),
+    const hasPartAuth = await store.verifyParticipantToken(
+      planRow.id,
       participantId,
       c.req.header('x-participant-token'),
-      isDemo
+      planRow.isDemo
     );
-    const hasAdminAuth = db.verifyAdminToken(planRow, c.req.header('x-admin-token'));
+    const hasAdminAuth = store.verifyAdminToken(planRow, c.req.header('x-admin-token'));
     if (!hasPartAuth && !hasAdminAuth) {
       return c.json({ error: 'No tienes permiso para editar este perfil' }, 403);
     }
@@ -506,40 +630,39 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     }
 
     try {
-      const participant = db.updateParticipant(String(planRow.id), participantId, parsed.data);
-      const snapshot = broadcast(slug, participantId);
+      const participant = await store.updateParticipant(planRow.id, participantId, parsed.data);
+      const snapshot = await broadcast(slug, participantId);
       return c.json({ participant, snapshot });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al actualizar perfil' }, 400);
     }
   });
 
-  app.delete('/api/plans/:slug/participants/:participantId', (c) => {
+  app.delete('/api/plans/:slug/participants/:participantId', async (c) => {
     const slug = c.req.param('slug');
     const participantId = c.req.param('participantId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
-    const isAdmin = db.verifyAdminToken(planRow, c.req.header('x-admin-token'));
-    const isSelf = db.verifyParticipantToken(
-      String(planRow.id),
+    const isAdmin = store.verifyAdminToken(planRow, c.req.header('x-admin-token'));
+    const isSelf = await store.verifyParticipantToken(
+      planRow.id,
       participantId,
       c.req.header('x-participant-token'),
-      isDemo
+      planRow.isDemo
     );
     if (!isAdmin && !isSelf) {
       return c.json({ error: 'Solo el organizador o el propio participante puede darse de baja' }, 403);
     }
 
-    db.deleteParticipant(String(planRow.id), participantId);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.deleteParticipant(planRow.id, participantId);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
   app.put('/api/plans/:slug/availability', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -548,30 +671,29 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Datos inválidos' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
-    const hasAuth = db.verifyParticipantToken(
-      String(planRow.id),
+    const hasAuth = await store.verifyParticipantToken(
+      planRow.id,
       parsed.data.participantId,
       c.req.header('x-participant-token'),
-      isDemo
+      planRow.isDemo
     );
     if (!hasAuth) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      db.setAvailabilityBatch(String(planRow.id), parsed.data.participantId, parsed.data.changes);
+      await store.setAvailabilityBatch(planRow.id, parsed.data.participantId, parsed.data.changes);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al guardar' }, 400);
     }
 
-    const snapshot = broadcast(slug, parsed.data.participantId);
+    const snapshot = await broadcast(slug, parsed.data.participantId);
     return c.json({ snapshot });
   });
 
   app.post('/api/plans/:slug/poll-options', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -580,34 +702,34 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Fecha inválida' }, 400);
     }
 
-    db.nominateDate(
-      String(planRow.id),
+    await store.nominateDate(
+      planRow.id,
       parsed.data.date,
       parsed.data.label ?? '',
       parsed.data.participantId ?? null
     );
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot }, 201);
   });
 
-  app.delete('/api/plans/:slug/poll-options/:date', (c) => {
+  app.delete('/api/plans/:slug/poll-options/:date', async (c) => {
     const slug = c.req.param('slug');
     const date = c.req.param('date');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    if (!db.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
       return c.json({ error: 'Solo el organizador puede eliminar fechas candidatas' }, 403);
     }
 
-    db.removePollOption(String(planRow.id), date);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.removePollOption(planRow.id, date);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
   app.post('/api/plans/:slug/votes/toggle', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -616,25 +738,20 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Voto inválido' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.participantId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      const result = db.toggleVote(
-        String(planRow.id),
-        parsed.data.participantId,
-        parsed.data.date
-      );
-      const snapshot = broadcast(slug, parsed.data.participantId);
+      const result = await store.toggleVote(planRow.id, parsed.data.participantId, parsed.data.date);
+      const snapshot = await broadcast(slug, parsed.data.participantId);
       return c.json({ ...result, snapshot });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'No se pudo votar' }, 400);
@@ -643,7 +760,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
 
   app.post('/api/plans/:slug/comments', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -652,26 +769,25 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Comentario inválido' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.participantId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      const comment = db.addComment(
-        String(planRow.id),
+      const comment = await store.addComment(
+        planRow.id,
         parsed.data.participantId,
         parsed.data.body,
         parsed.data.date ?? null
       );
-      const snapshot = broadcast(slug, parsed.data.participantId);
+      const snapshot = await broadcast(slug, parsed.data.participantId);
       return c.json({ comment, snapshot }, 201);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al comentar' }, 400);
@@ -681,7 +797,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
   // ---- RSVP ----
   app.put('/api/plans/:slug/rsvp', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -690,37 +806,39 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'RSVP inválido' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.participantId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      db.setRsvp(
-        String(planRow.id),
+      await store.setRsvp(
+        planRow.id,
         parsed.data.participantId,
         parsed.data.status,
         parsed.data.guestsCount ?? 0,
         parsed.data.note ?? ''
       );
-      const snapshot = broadcast(slug, parsed.data.participantId);
+      const snapshot = await broadcast(slug, parsed.data.participantId);
       return c.json({ snapshot });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'Error al guardar asistencia' }, 400);
+      return c.json(
+        { error: err instanceof Error ? err.message : 'Error al guardar asistencia' },
+        400
+      );
     }
   });
 
   // ---- Sub-Polls (Where / What) ----
   app.post('/api/plans/:slug/sub-polls', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -729,21 +847,21 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Encuesta inválida' }, 400);
     }
 
-    const pollId = db.createSubPoll(
-      String(planRow.id),
+    const pollId = await store.createSubPoll(
+      planRow.id,
       parsed.data.category,
       parsed.data.question,
       parsed.data.initialOptions ?? [],
       parsed.data.participantId ?? null
     );
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ pollId, snapshot }, 201);
   });
 
   app.post('/api/plans/:slug/sub-polls/:pollId/options', async (c) => {
     const slug = c.req.param('slug');
     const pollId = c.req.param('pollId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -753,15 +871,15 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     }
 
     try {
-      const optionId = db.addSubPollOption(
-        String(planRow.id),
+      const optionId = await store.addSubPollOption(
+        planRow.id,
         pollId,
         parsed.data.title,
         parsed.data.url ?? '',
         parsed.data.estimatedCost ?? '',
         parsed.data.participantId ?? null
       );
-      const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+      const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
       return c.json({ optionId, snapshot }, 201);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al añadir opción' }, 400);
@@ -771,7 +889,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
   app.post('/api/plans/:slug/sub-polls/:pollId/vote', async (c) => {
     const slug = c.req.param('slug');
     const pollId = c.req.param('pollId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -780,26 +898,25 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: 'Voto inválido' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.participantId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      const result = db.toggleSubPollVote(
-        String(planRow.id),
+      const result = await store.toggleSubPollVote(
+        planRow.id,
         pollId,
         parsed.data.optionId,
         parsed.data.participantId
       );
-      const snapshot = broadcast(slug, parsed.data.participantId);
+      const snapshot = await broadcast(slug, parsed.data.participantId);
       return c.json({ ...result, snapshot });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al votar' }, 400);
@@ -809,36 +926,36 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
   app.patch('/api/plans/:slug/sub-polls/:pollId', async (c) => {
     const slug = c.req.param('slug');
     const pollId = c.req.param('pollId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
     const parsed = setSubPollWinnerSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Datos inválidos' }, 400);
 
-    db.setSubPollWinner(String(planRow.id), pollId, parsed.data.winnerOptionId);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.setSubPollWinner(planRow.id, pollId, parsed.data.winnerOptionId);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
-  app.delete('/api/plans/:slug/sub-polls/:pollId', (c) => {
+  app.delete('/api/plans/:slug/sub-polls/:pollId', async (c) => {
     const slug = c.req.param('slug');
     const pollId = c.req.param('pollId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    if (!db.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
       return c.json({ error: 'Solo el organizador puede eliminar encuestas' }, 403);
     }
-    db.deleteSubPoll(String(planRow.id), pollId);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.deleteSubPoll(planRow.id, pollId);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
   // ---- Checklist ----
   app.post('/api/plans/:slug/checklist', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -847,20 +964,20 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Ítem inválido' }, 400);
     }
 
-    const itemId = db.addChecklistItem(
-      String(planRow.id),
+    const itemId = await store.addChecklistItem(
+      planRow.id,
       parsed.data.title,
       parsed.data.assignedTo ?? null,
       parsed.data.participantId ?? null
     );
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ itemId, snapshot }, 201);
   });
 
   app.patch('/api/plans/:slug/checklist/:itemId', async (c) => {
     const slug = c.req.param('slug');
     const itemId = c.req.param('itemId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -868,29 +985,29 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     if (!parsed.success) return c.json({ error: 'Datos inválidos' }, 400);
 
     try {
-      db.updateChecklistItem(String(planRow.id), itemId, parsed.data);
-      const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+      await store.updateChecklistItem(planRow.id, itemId, parsed.data);
+      const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
       return c.json({ snapshot });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al actualizar' }, 400);
     }
   });
 
-  app.delete('/api/plans/:slug/checklist/:itemId', (c) => {
+  app.delete('/api/plans/:slug/checklist/:itemId', async (c) => {
     const slug = c.req.param('slug');
     const itemId = c.req.param('itemId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    db.deleteChecklistItem(String(planRow.id), itemId);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.deleteChecklistItem(planRow.id, itemId);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
   // ---- Carpooling ----
   app.post('/api/plans/:slug/carpools', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
@@ -899,28 +1016,27 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Datos de coche inválidos' }, 400);
     }
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.driverId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      const rideId = db.addCarpoolRide(
-        String(planRow.id),
+      const rideId = await store.addCarpoolRide(
+        planRow.id,
         parsed.data.driverId,
         parsed.data.origin,
         parsed.data.seatsTotal,
         parsed.data.departureTime ?? '',
         parsed.data.notes ?? ''
       );
-      const snapshot = broadcast(slug, parsed.data.driverId);
+      const snapshot = await broadcast(slug, parsed.data.driverId);
       return c.json({ rideId, snapshot }, 201);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Error al añadir coche' }, 400);
@@ -930,52 +1046,51 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
   app.post('/api/plans/:slug/carpools/:rideId/toggle', async (c) => {
     const slug = c.req.param('slug');
     const rideId = c.req.param('rideId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
     const body = await c.req.json().catch(() => null);
     const parsed = toggleCarpoolSeatSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Participante inválido' }, 400);
 
-    const isDemo = Number(planRow.is_demo ?? 0) === 1;
     if (
-      !db.verifyParticipantToken(
-        String(planRow.id),
+      !(await store.verifyParticipantToken(
+        planRow.id,
         parsed.data.participantId,
         c.req.header('x-participant-token'),
-        isDemo
-      )
+        planRow.isDemo
+      ))
     ) {
       return c.json({ error: 'Sesión de participante no válida' }, 403);
     }
 
     try {
-      const result = db.toggleCarpoolSeat(String(planRow.id), rideId, parsed.data.participantId);
-      const snapshot = broadcast(slug, parsed.data.participantId);
+      const result = await store.toggleCarpoolSeat(planRow.id, rideId, parsed.data.participantId);
+      const snapshot = await broadcast(slug, parsed.data.participantId);
       return c.json({ ...result, snapshot });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'No se pudo reservar plaza' }, 400);
     }
   });
 
-  app.delete('/api/plans/:slug/carpools/:rideId', (c) => {
+  app.delete('/api/plans/:slug/carpools/:rideId', async (c) => {
     const slug = c.req.param('slug');
     const rideId = c.req.param('rideId');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    db.deleteCarpoolRide(String(planRow.id), rideId);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    await store.deleteCarpoolRide(planRow.id, rideId);
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });
   });
 
   // ---- Plan Settings & Delete (Admin-protected) ----
   app.patch('/api/plans/:slug', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    if (!db.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
       return c.json({ error: 'Solo el organizador puede modificar los ajustes de esta quedada' }, 403);
     }
 
@@ -985,22 +1100,22 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       return c.json({ error: parsed.error.issues[0]?.message || 'Ajustes inválidos' }, 400);
     }
 
-    const updated = db.updatePlanSettings(slug, parsed.data);
+    const updated = await store.updatePlanSettings(slug, parsed.data);
     if (!updated) return c.json({ error: 'Quedada no encontrada' }, 404);
-    const snapshot = broadcast(slug, getViewerId(c, String(planRow.id)));
+    const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ plan: updated, snapshot });
   });
 
-  app.delete('/api/plans/:slug', (c) => {
+  app.delete('/api/plans/:slug', async (c) => {
     const slug = c.req.param('slug');
-    const planRow = db.getPlanRowBySlug(slug);
+    const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
-    if (!db.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
       return c.json({ error: 'Solo el organizador puede eliminar esta quedada' }, 403);
     }
 
-    db.deletePlan(slug);
+    await store.deletePlan(slug);
     return c.json({ deleted: true });
   });
 
@@ -1012,7 +1127,7 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
     app.use('/manifest.webmanifest', serveStatic({ root: relRoot }));
     app.use('/sw.js', serveStatic({ root: relRoot }));
 
-    app.get('*', (c) => {
+    app.get('*', async (c) => {
       let indexHtml = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8');
       const reqPath = c.req.path;
       const match = reqPath.match(/^\/e\/([^/]+)\/?$/);
@@ -1020,30 +1135,36 @@ export function createApp(db: ShalendarDB, hub = new PlanEventHub(), staticDir?:
       if (match && match[1]) {
         c.header('X-Robots-Tag', 'noindex, nofollow');
         const slug = decodeURIComponent(match[1]);
-        const snapshot = db.getPlanSnapshotBySlug(slug);
-        if (snapshot) {
-          const { plan, participants } = snapshot;
-          const ogTitle = `${plan.emoji} ${plan.title} — Shalendar`;
-          const ogDesc = plan.confirmedDate
-            ? `¡Fecha confirmada: ${formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
-            : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
-          const origin = new URL(c.req.url).origin;
-          const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg`;
+        try {
+          const snapshot = await store.getPlanSnapshotBySlug(slug);
+          if (snapshot) {
+            const { plan, participants } = snapshot;
+            const ogTitle = `${plan.emoji} ${plan.title} — Shalendar`;
+            const ogDesc = plan.confirmedDate
+              ? `¡Fecha confirmada: ${formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
+              : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
+            const origin = new URL(c.req.url).origin;
+            const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg`;
 
-          const metaInjection = [
-            `<meta property="og:type" content="website" />`,
-            `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}" />`,
-            `<meta property="og:description" content="${escapeHtmlAttr(ogDesc)}" />`,
-            `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
-            `<meta name="twitter:card" content="summary_large_image" />`,
-            `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
-            `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
-            `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
-          ].join('\n    ');
+            const metaInjection = [
+              `<meta property="og:type" content="website" />`,
+              `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+              `<meta property="og:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+              `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
+              `<meta name="twitter:card" content="summary_large_image" />`,
+              `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+              `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+              `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
+            ].join('\n    ');
 
-          indexHtml = indexHtml
-            .replace(/<title>.*?<\/title>/, `<title>${escapeHtmlAttr(ogTitle)}</title>`)
-            .replace('</head>', `    ${metaInjection}\n  </head>`);
+            indexHtml = indexHtml
+              .replace(/<title>.*?<\/title>/, `<title>${escapeHtmlAttr(ogTitle)}</title>`)
+              .replace('</head>', `    ${metaInjection}\n  </head>`);
+          }
+        } catch (err) {
+          if (!(err instanceof PlanExpiredError)) {
+            throw err;
+          }
         }
       }
 

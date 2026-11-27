@@ -1,0 +1,390 @@
+import type {
+  AddCarpoolRequest,
+  AddChecklistItemRequest,
+  AddCommentRequest,
+  AddSubPollOptionRequest,
+  ClaimParticipantRequest,
+  CreatePlanRequest,
+  CreatePlanResponse,
+  CreateSubPollRequest,
+  JoinPlanRequest,
+  NominateDateRequest,
+  Participant,
+  PlanSnapshot,
+  SetAvailabilityBatchRequest,
+  SetRsvpRequest,
+  ToggleSubPollVoteRequest,
+  ToggleVoteRequest,
+  UpdateChecklistItemRequest,
+  UpdateParticipantRequest,
+  UpdatePlanSettingsRequest,
+} from '../../shared/types';
+import { getAdminToken, getParticipantToken, getSavedParticipantId } from './storage';
+
+export interface PublicPlanSummary {
+  slug: string;
+  title: string;
+  emoji: string;
+  location: string;
+  participantCount: number;
+  confirmedDate: string | null;
+  createdAt: string;
+}
+
+function authHeaders(slug?: string): Record<string, string> {
+  if (!slug) return {};
+  const headers: Record<string, string> = {};
+  const adminToken = getAdminToken(slug);
+  const participantToken = getParticipantToken(slug);
+  const participantId = getSavedParticipantId(slug);
+  if (adminToken) headers['X-Admin-Token'] = adminToken;
+  if (participantToken) headers['X-Participant-Token'] = participantToken;
+  if (participantId) headers['X-Participant-Id'] = participantId;
+  return headers;
+}
+
+async function requestJson<T>(url: string, init?: RequestInit, slug?: string): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(slug),
+      ...(init?.headers ?? {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || `Error ${res.status}`);
+  }
+  return data as T;
+}
+
+export const api = {
+  listPublicPlans(): Promise<{ plans: PublicPlanSummary[] }> {
+    return requestJson('/api/plans');
+  },
+
+  lookupPlans(slugs: string[]): Promise<{ plans: PublicPlanSummary[] }> {
+    return requestJson('/api/plans/lookup', {
+      method: 'POST',
+      body: JSON.stringify({ slugs }),
+    });
+  },
+
+  createPlan(payload: CreatePlanRequest): Promise<CreatePlanResponse> {
+    return requestJson('/api/plans', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPlan(slug: string): Promise<PlanSnapshot> {
+    return requestJson(`/api/plans/${encodeURIComponent(slug)}`, undefined, slug);
+  },
+
+  resolveSession(
+    slug: string,
+    tokens: { participantToken?: string | null; adminToken?: string | null }
+  ): Promise<{ participant: Participant | null; isAdmin: boolean }> {
+    const headers: Record<string, string> = {};
+    if (tokens.participantToken) headers['X-Participant-Token'] = tokens.participantToken;
+    if (tokens.adminToken) headers['X-Admin-Token'] = tokens.adminToken;
+    return requestJson(`/api/plans/${encodeURIComponent(slug)}/session`, { headers });
+  },
+
+  joinPlan(
+    slug: string,
+    payload: JoinPlanRequest
+  ): Promise<{ participant: Participant; participantToken: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/participants`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  claimParticipant(
+    slug: string,
+    payload: ClaimParticipantRequest
+  ): Promise<{ participant: Participant; participantToken: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/participants/claim`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  updateParticipant(
+    slug: string,
+    participantId: string,
+    payload: UpdateParticipantRequest
+  ): Promise<{ participant: Participant; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/participants/${encodeURIComponent(participantId)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  removeParticipant(
+    slug: string,
+    participantId: string
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/participants/${encodeURIComponent(participantId)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+
+  setAvailability(
+    slug: string,
+    payload: SetAvailabilityBatchRequest
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/availability`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  nominateDate(
+    slug: string,
+    payload: NominateDateRequest
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/poll-options`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  removePollOption(
+    slug: string,
+    date: string
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/poll-options/${encodeURIComponent(date)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+
+  toggleVote(
+    slug: string,
+    payload: ToggleVoteRequest
+  ): Promise<{ voted: boolean; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/votes/toggle`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  addComment(
+    slug: string,
+    payload: AddCommentRequest
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/comments`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  updatePlan(
+    slug: string,
+    payload: UpdatePlanSettingsRequest
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  deletePlan(slug: string): Promise<{ deleted: boolean }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+
+  // ---- Wave 2: RSVP, Sub-Polls, Checklist, Carpooling ----
+  setRsvp(slug: string, payload: SetRsvpRequest): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/rsvp`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  createSubPoll(
+    slug: string,
+    payload: CreateSubPollRequest
+  ): Promise<{ pollId: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/sub-polls`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  addSubPollOption(
+    slug: string,
+    pollId: string,
+    payload: AddSubPollOptionRequest
+  ): Promise<{ optionId: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/sub-polls/${encodeURIComponent(pollId)}/options`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  toggleSubPollVote(
+    slug: string,
+    pollId: string,
+    payload: ToggleSubPollVoteRequest
+  ): Promise<{ voted: boolean; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/sub-polls/${encodeURIComponent(pollId)}/vote`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  setSubPollWinner(
+    slug: string,
+    pollId: string,
+    winnerOptionId: string | null
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/sub-polls/${encodeURIComponent(pollId)}`,
+      { method: 'PATCH', body: JSON.stringify({ winnerOptionId }) },
+      slug
+    );
+  },
+
+  deleteSubPoll(slug: string, pollId: string): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/sub-polls/${encodeURIComponent(pollId)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+
+  addChecklistItem(
+    slug: string,
+    payload: AddChecklistItemRequest
+  ): Promise<{ itemId: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/checklist`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  updateChecklistItem(
+    slug: string,
+    itemId: string,
+    payload: UpdateChecklistItemRequest
+  ): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/checklist/${encodeURIComponent(itemId)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  deleteChecklistItem(slug: string, itemId: string): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/checklist/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+
+  addCarpoolRide(
+    slug: string,
+    payload: AddCarpoolRequest
+  ): Promise<{ rideId: string; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/carpools`,
+      { method: 'POST', body: JSON.stringify(payload) },
+      slug
+    );
+  },
+
+  toggleCarpoolSeat(
+    slug: string,
+    rideId: string,
+    participantId: string
+  ): Promise<{ joined: boolean; snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/carpools/${encodeURIComponent(rideId)}/toggle`,
+      { method: 'POST', body: JSON.stringify({ participantId }) },
+      slug
+    );
+  },
+
+  deleteCarpoolRide(slug: string, rideId: string): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/carpools/${encodeURIComponent(rideId)}`,
+      { method: 'DELETE' },
+      slug
+    );
+  },
+};
+
+export function subscribePlanStream(
+  slug: string,
+  callbacks: {
+    onSnapshot: (snapshot: PlanSnapshot) => void;
+    onPresence?: (onlineParticipantIds: string[]) => void;
+    onConnectionChange?: (connected: boolean) => void;
+  },
+  options?: { participantId?: string | null; skipInitial?: boolean }
+): () => void {
+  const params = new URLSearchParams();
+  if (options?.skipInitial) params.set('skipInitial', '1');
+  const pToken = getParticipantToken(slug);
+  if (pToken) params.set('participantToken', pToken);
+  else if (options?.participantId) params.set('participantId', options.participantId);
+
+  const qs = params.toString();
+  const es = new EventSource(`/api/plans/${encodeURIComponent(slug)}/stream${qs ? `?${qs}` : ''}`);
+
+  es.onopen = () => {
+    callbacks.onConnectionChange?.(true);
+  };
+
+  es.addEventListener('snapshot', (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data) as PlanSnapshot;
+      callbacks.onSnapshot(parsed);
+      callbacks.onConnectionChange?.(true);
+    } catch {
+      // Ignore malformed chunk
+    }
+  });
+
+  es.addEventListener('presence', (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data) as { onlineParticipantIds: string[] };
+      callbacks.onPresence?.(parsed.onlineParticipantIds ?? []);
+      callbacks.onConnectionChange?.(true);
+    } catch {
+      // Ignore
+    }
+  });
+
+  es.onerror = () => {
+    callbacks.onConnectionChange?.(false);
+  };
+
+  return () => {
+    es.close();
+  };
+}

@@ -420,7 +420,7 @@ export function VotingPanel({
                   {/* Middle Info & Visual Bars */}
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-display text-sm font-bold text-stone-900 dark:text-white truncate">
+                      <span className="hidden lg:inline font-display text-sm font-bold text-stone-900 dark:text-white truncate">
                         {formatDateLong(item.date, language)}
                       </span>
                       {isConfirmed && (
@@ -448,7 +448,7 @@ export function VotingPanel({
                     </div>
 
                     {item.pollOption?.label && (
-                      <p className="text-xs text-stone-600 dark:text-slate-300">
+                      <p className="text-[13px] font-semibold text-stone-800 dark:text-slate-100 lg:text-xs lg:font-normal lg:text-stone-600 lg:dark:text-slate-300">
                         {item.pollOption.label}
                       </p>
                     )}
@@ -483,7 +483,7 @@ export function VotingPanel({
 
                       {!blindVoteStats?.hidden && item.votes.length > 0 && (
                         <div className="flex items-center justify-between gap-2 pt-0.5">
-                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-amber-100 dark:bg-amber-950/60">
+                          <div className="hidden lg:block h-1.5 flex-1 overflow-hidden rounded-full bg-amber-100 dark:bg-amber-950/60">
                             <div
                               style={{ width: `${Math.min(100, Math.max(12, votePct))}%` }}
                               className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-400 transition-all duration-300"

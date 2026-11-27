@@ -456,6 +456,49 @@ export interface Translations {
     nudgeConfirmed: (names: string, title: string, dateRange: string, url: string) => string;
     nudgeOpen: (names: string, title: string, url: string) => string;
   };
+  mobile: {
+    navDates: string;
+    navVote: string;
+    navLogistics: string;
+    navGroup: string;
+    menuAria: string;
+    shareAria: string;
+    menuTitle: string;
+    menuProfile: string;
+    menuJoin: string;
+    menuSettings: string;
+    menuLanguage: string;
+    menuTheme: string;
+    themeDark: string;
+    themeLight: string;
+    menuHome: string;
+    planInfoTitle: string;
+    planInfoHint: string;
+    topPillLabel: string;
+    topPillFree: (yes: number, total: number) => string;
+    topPillView: string;
+    confirmedPillCta: string;
+    filter: string;
+    onlyMe: string;
+    paintCta: string;
+    paintHint: string;
+    paintDone: string;
+    paintYes: string;
+    paintMaybe: string;
+    paintNo: string;
+    voteModeRanking: string;
+    voteModeMatrix: string;
+    logPolls: string;
+    logChecklist: string;
+    logCarpool: string;
+    participantsTitle: (count: number) => string;
+    onlineTag: string;
+    joinCardTitle: string;
+    joinCardDesc: string;
+    myCardHint: string;
+    editProfileBtn: string;
+    matrixScrollHint: string;
+  };
   avatar: {
     onlineSuffix: string;
     requiredSuffix: string;
@@ -936,6 +979,49 @@ const ES: Translations = {
     nudgeOpen: (names, title, url) =>
       `¡Hey ${names}! Solo faltáis vosotros por marcar días o votar en *${title}*:\n${url}`,
   },
+  mobile: {
+    navDates: 'Fechas',
+    navVote: 'Votar',
+    navLogistics: 'Logística',
+    navGroup: 'Grupo',
+    menuAria: 'Más opciones',
+    shareAria: 'Compartir plan',
+    menuTitle: 'Opciones del plan',
+    menuProfile: 'Mi perfil y PIN',
+    menuJoin: 'Unirme con mi nombre',
+    menuSettings: 'Ajustes de organizador',
+    menuLanguage: 'Idioma',
+    menuTheme: 'Apariencia',
+    themeDark: 'Oscuro',
+    themeLight: 'Claro',
+    menuHome: 'Ir al inicio',
+    planInfoTitle: 'Detalles del plan',
+    planInfoHint: 'Toca para ver detalles',
+    topPillLabel: 'TOP',
+    topPillFree: (yes, total) => `${yes}/${total} libres`,
+    topPillView: 'Ver',
+    confirmedPillCta: 'Detalles',
+    filter: 'Filtrar',
+    onlyMe: 'Solo yo',
+    paintCta: 'Marcar mis días',
+    paintHint: 'Toca o arrastra sobre los días · toca otra vez para quitar',
+    paintDone: 'Listo',
+    paintYes: 'Sí',
+    paintMaybe: 'Quizás',
+    paintNo: 'No',
+    voteModeRanking: 'Ranking',
+    voteModeMatrix: 'Comparativa',
+    logPolls: 'Sitio',
+    logChecklist: 'Lista',
+    logCarpool: 'Coches',
+    participantsTitle: (count) => `Participantes (${count})`,
+    onlineTag: 'en línea',
+    joinCardTitle: 'Únete al plan',
+    joinCardDesc: 'Pon tu nombre para marcar días, votar y comentar. Sin registros.',
+    myCardHint: 'Tus cambios se guardan y sincronizan al instante.',
+    editProfileBtn: 'Editar',
+    matrixScrollHint: 'Desliza para ver más fechas →',
+  },
   avatar: {
     onlineSuffix: ' · En línea',
     requiredSuffix: ' · Imprescindible',
@@ -1412,6 +1498,49 @@ const EN: Translations = {
       `Hey ${names}! We have a date for *${title}* (${dateRange}). Confirm your RSVP here:\n${url}`,
     nudgeOpen: (names, title, url) =>
       `Hey ${names}! We're just waiting on you to mark your days or vote in *${title}*:\n${url}`,
+  },
+  mobile: {
+    navDates: 'Dates',
+    navVote: 'Vote',
+    navLogistics: 'Logistics',
+    navGroup: 'Group',
+    menuAria: 'More options',
+    shareAria: 'Share plan',
+    menuTitle: 'Plan options',
+    menuProfile: 'My profile & PIN',
+    menuJoin: 'Join with my name',
+    menuSettings: 'Organizer settings',
+    menuLanguage: 'Language',
+    menuTheme: 'Appearance',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    menuHome: 'Go home',
+    planInfoTitle: 'Plan details',
+    planInfoHint: 'Tap for details',
+    topPillLabel: 'TOP',
+    topPillFree: (yes, total) => `${yes}/${total} free`,
+    topPillView: 'View',
+    confirmedPillCta: 'Details',
+    filter: 'Filter',
+    onlyMe: 'Only me',
+    paintCta: 'Mark my days',
+    paintHint: 'Tap or drag over days · tap again to clear',
+    paintDone: 'Done',
+    paintYes: 'Yes',
+    paintMaybe: 'Maybe',
+    paintNo: 'No',
+    voteModeRanking: 'Ranking',
+    voteModeMatrix: 'Comparison',
+    logPolls: 'Place',
+    logChecklist: 'List',
+    logCarpool: 'Cars',
+    participantsTitle: (count) => `Participants (${count})`,
+    onlineTag: 'online',
+    joinCardTitle: 'Join the plan',
+    joinCardDesc: 'Add your name to mark days, vote and comment. No sign-up.',
+    myCardHint: 'Your changes are saved and synced instantly.',
+    editProfileBtn: 'Edit',
+    matrixScrollHint: 'Swipe to see more dates →',
   },
   avatar: {
     onlineSuffix: ' · Online',

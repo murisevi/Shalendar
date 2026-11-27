@@ -130,13 +130,14 @@ export function IdentityModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-stone-950/60 backdrop-blur-sm sm:p-4 animate-fade-in"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl space-y-5 animate-pop max-h-[92vh] overflow-y-auto"
+        className="relative w-full max-w-md rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pt-7 sm:pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 shadow-2xl space-y-5 animate-sheet-sm-pop max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain"
       >
+        <span aria-hidden className="sm:hidden absolute left-1/2 top-2.5 h-1.5 w-10 -translate-x-1/2 rounded-full bg-stone-300 dark:bg-slate-700" />
         <div className="flex items-start justify-between gap-2">
           {mode === 'join' ? (
             <div className="flex-1 rounded-2xl border border-teal-200/70 dark:border-teal-800/50 bg-teal-50/70 dark:bg-teal-950/40 p-3.5 flex items-center gap-3">

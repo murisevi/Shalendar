@@ -59,7 +59,11 @@ interface PlanLogisticsPanelProps {
   onToggleCarpoolSeat: (rideId: string) => Promise<void>;
   onDeleteCarpool: (rideId: string) => Promise<void>;
   onRequireIdentity: () => void;
+  /** Show a single module (mobile segmented view) or all of them stacked (desktop). */
+  section?: LogisticsSection;
 }
+
+export type LogisticsSection = 'all' | 'polls' | 'checklist' | 'carpool';
 
 export function PlanLogisticsPanel({
   participants,
@@ -80,6 +84,7 @@ export function PlanLogisticsPanel({
   onToggleCarpoolSeat,
   onDeleteCarpool,
   onRequireIdentity,
+  section = 'all',
 }: PlanLogisticsPanelProps) {
   const { t } = useI18n();
 
@@ -169,8 +174,9 @@ export function PlanLogisticsPanel({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 min-w-0">
       {/* 1. SUB-POLLS (WHERE / WHAT) */}
+      {(section === 'all' || section === 'polls') && (
       <section className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -263,11 +269,13 @@ export function PlanLogisticsPanel({
                   className="rounded-2xl border border-stone-200/80 dark:border-slate-800 bg-stone-50/50 dark:bg-slate-800/35 p-3.5 space-y-3"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{categoryMeta[poll.category].emoji}</span>
-                      <h4 className="font-display text-sm font-extrabold">{poll.question}</h4>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="text-lg shrink-0">{categoryMeta[poll.category].emoji}</span>
+                      <h4 className="min-w-0 break-words font-display text-sm font-extrabold">
+                        {poll.question}
+                      </h4>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() =>
@@ -294,7 +302,7 @@ export function PlanLogisticsPanel({
                   {addingOptPollId === poll.id && (
                     <form
                       onSubmit={(e) => handleAddOption(e, poll.id)}
-                      className="grid gap-2 sm:grid-cols-3 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 p-2.5 animate-pop"
+                      className="grid min-w-0 gap-2 sm:grid-cols-3 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 p-2.5 animate-pop"
                     >
                       <input
                         type="text"
@@ -360,7 +368,7 @@ export function PlanLogisticsPanel({
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-xs font-bold text-stone-900 dark:text-white">
+                                <span className="min-w-0 break-words text-xs font-bold text-stone-900 dark:text-white">
                                   {opt.title}
                                 </span>
                                 {isWinner && (
@@ -442,8 +450,10 @@ export function PlanLogisticsPanel({
           </div>
         )}
       </section>
+      )}
 
       {/* 2. COLLABORATIVE CHECKLIST */}
+      {(section === 'all' || section === 'checklist') && (
       <section className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -472,7 +482,7 @@ export function PlanLogisticsPanel({
             value={taskTitle}
             onChange={(e) => setTaskTitle(e.target.value)}
             placeholder={t.logistics.taskPlaceholder}
-            className="flex-1 min-w-[200px] rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-2 text-xs outline-none focus:border-teal-500"
+            className="min-w-0 basis-full sm:basis-auto sm:min-w-[200px] flex-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-2 text-xs outline-none focus:border-teal-500"
           />
           <label className="inline-flex items-center gap-1.5 text-xs text-stone-600 dark:text-slate-300 cursor-pointer">
             <input
@@ -577,8 +587,10 @@ export function PlanLogisticsPanel({
           </div>
         )}
       </section>
+      )}
 
       {/* 3. CARPOOLING */}
+      {(section === 'all' || section === 'carpool') && (
       <section className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -612,7 +624,7 @@ export function PlanLogisticsPanel({
               value={carOrigin}
               onChange={(e) => setCarOrigin(e.target.value)}
               placeholder={t.logistics.carOriginPlaceholder}
-              className="sm:col-span-2 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none focus:border-sky-500"
+              className="min-w-0 sm:col-span-2 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none focus:border-sky-500"
             />
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-stone-600 dark:text-slate-300 shrink-0">
@@ -775,6 +787,7 @@ export function PlanLogisticsPanel({
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

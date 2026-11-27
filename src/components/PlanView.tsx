@@ -5,6 +5,7 @@ import {
   CalendarHeart,
   CalendarPlus,
   ClipboardList,
+  Clock,
   Crown,
   Download,
   Grid3X3,
@@ -41,7 +42,8 @@ import {
   rankBestRanges,
   type RankingSortMode,
 } from '../../shared/dates';
-import { api, subscribePlanStream } from '../lib/api';
+import { getRemainingDays } from '../../shared/persistence';
+import { api, ApiError, subscribePlanStream } from '../lib/api';
 import {
   forgetPlan,
   getAdminToken,
@@ -78,6 +80,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   const [snapshot, setSnapshot] = useState<PlanSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [expired, setExpired] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
 
@@ -122,12 +125,16 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     let unsubscribeStream: (() => void) | null = null;
     setLoading(true);
     setNotFound(false);
+    setExpired(false);
 
     async function boot() {
-      // 1. Check cross-device transfer tokens in URL query params and clean URL immediately
+      // 1. Check cross-device transfer tokens in URL query params or #admin= hash and clean URL immediately
       const url = new URL(window.location.href);
       const pt = url.searchParams.get('pt');
-      const at = url.searchParams.get('at');
+      const hashAdmin = url.hash.startsWith('#admin=')
+        ? decodeURIComponent(url.hash.slice('#admin='.length))
+        : null;
+      const at = url.searchParams.get('at') ?? hashAdmin;
       if (pt || at) {
         if (pt) saveParticipantToken(slug, pt);
         if (at) saveAdminToken(slug, at);
@@ -222,9 +229,14 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           },
           { participantId: savedId, skipInitial: true }
         );
-      } catch {
+      } catch (err) {
         if (cancelled) return;
-        setNotFound(true);
+        if (err instanceof ApiError && err.expired) {
+          forgetPlan(slug);
+          setExpired(true);
+        } else {
+          setNotFound(true);
+        }
         setLoading(false);
       }
     }
@@ -579,6 +591,26 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
   }
 
+  async function handleExtendExpiration(extraDays = 30) {
+    try {
+      const res = await api.extendPlanExpiration(slug, extraDays);
+      setSnapshot(res.snapshot);
+      showToast(`Duración extendida +${extraDays} días`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No se pudo extender', 'err');
+    }
+  }
+
+  function handleExportBackup() {
+    const a = document.createElement('a');
+    a.href = api.getExportBackupUrl(slug);
+    a.download = `${slug}-backup.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Copia .json descargada');
+  }
+
   async function handleAddComment(date: string | null, body: string) {
     if (!me) {
       setIdentityModalMode('join');
@@ -649,6 +681,31 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         <div className="flex flex-col items-center gap-3 text-stone-500 dark:text-slate-400">
           <RefreshCw className="h-7 w-7 animate-spin text-teal-600" />
           <p className="text-sm font-medium">Cargando calendario...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (expired) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#FAF9F6] dark:bg-[#0E1318] p-4">
+        <div className="max-w-md rounded-3xl border border-amber-200/80 dark:border-amber-900/60 bg-white dark:bg-slate-900 p-8 text-center space-y-4 shadow-lg">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 dark:bg-amber-950/70 text-3xl">
+            ⏳
+          </div>
+          <h1 className="font-display text-2xl font-extrabold">Esta quedada caducó</h1>
+          <p className="text-sm text-stone-500 dark:text-slate-400">
+            Sus datos se eliminaron automáticamente según la política de privacidad configurada por
+            el organizador. Puedes crear una nueva quedada en segundos.
+          </p>
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="inline-flex items-center gap-2 rounded-xl bg-teal-600 hover:bg-teal-700 px-5 py-2.5 text-sm font-bold text-white transition cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Crear nueva quedada
+          </button>
         </div>
       </div>
     );
@@ -783,6 +840,45 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       </header>
 
       <main className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 space-y-5">
+        {(() => {
+          const remainingDays = getRemainingDays(plan.expiresAt);
+          if (remainingDays === null || remainingDays > 7) return null;
+          return (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200/80 dark:border-amber-900/60 bg-amber-50/80 dark:bg-amber-950/35 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200">
+              <span className="inline-flex items-center gap-2 font-medium">
+                <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>
+                  Esta quedada se auto-eliminará en{' '}
+                  <strong>
+                    {remainingDays === 0
+                      ? 'menos de 24 h'
+                      : `${remainingDays} ${remainingDays === 1 ? 'día' : 'días'}`}
+                  </strong>{' '}
+                  para no dejar rastro.
+                </span>
+              </span>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleExtendExpiration(30)}
+                    className="rounded-lg bg-amber-600 hover:bg-amber-700 px-2.5 py-1 text-[11px] font-bold text-white transition cursor-pointer"
+                  >
+                    Extender +30 días
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleExportBackup}
+                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 dark:border-amber-800 bg-white/80 dark:bg-slate-900/70 px-2.5 py-1 text-[11px] font-semibold hover:bg-white transition cursor-pointer"
+                >
+                  <Download className="h-3 w-3" />
+                  Exportar .json
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         {plan.description && (
           <p className="text-sm text-stone-600 dark:text-slate-300 max-w-3xl leading-relaxed">
             {plan.description}
@@ -1297,6 +1393,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         plan={plan}
         participants={participants}
         onSave={handleSaveSettings}
+        onExtendExpiration={handleExtendExpiration}
+        onExportBackup={handleExportBackup}
         onRemoveParticipant={handleRemoveParticipant}
         onDeletePlan={handleDeletePlan}
       />

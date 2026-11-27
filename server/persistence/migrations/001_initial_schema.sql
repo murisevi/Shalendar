@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS participants (
   avatar_color         TEXT NOT NULL,
   avatar_emoji         TEXT NOT NULL,
   is_organizer         BOOLEAN NOT NULL DEFAULT FALSE,
-  participant_token_hash TEXT NOT NULL,
+  participant_token    TEXT NOT NULL,
   pin_hash             TEXT,
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

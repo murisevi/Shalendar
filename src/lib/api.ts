@@ -11,6 +11,7 @@ import type {
   NominateDateRequest,
   Participant,
   PlanSnapshot,
+  RetentionPolicy,
   SetAvailabilityBatchRequest,
   SetRsvpRequest,
   ToggleSubPollVoteRequest,
@@ -21,6 +22,18 @@ import type {
 } from '../../shared/types';
 import { getAdminToken, getParticipantToken, getSavedParticipantId } from './storage';
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly expired: boolean;
+
+  constructor(message: string, status: number, expired = false) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.expired = expired;
+  }
+}
+
 export interface PublicPlanSummary {
   slug: string;
   title: string;
@@ -29,6 +42,8 @@ export interface PublicPlanSummary {
   participantCount: number;
   confirmedDate: string | null;
   createdAt: string;
+  retentionPolicy?: RetentionPolicy;
+  expiresAt?: string | null;
 }
 
 function authHeaders(slug?: string): Record<string, string> {
@@ -52,9 +67,13 @@ async function requestJson<T>(url: string, init?: RequestInit, slug?: string): P
       ...(init?.headers ?? {}),
     },
   });
-  const data = await res.json().catch(() => ({}));
+  const data = (await res.json().catch(() => ({}))) as { error?: string; expired?: boolean };
   if (!res.ok) {
-    throw new Error((data as { error?: string }).error || `Error ${res.status}`);
+    throw new ApiError(
+      data.error || `Error ${res.status}`,
+      res.status,
+      Boolean(data.expired) || res.status === 410
+    );
   }
   return data as T;
 }
@@ -209,6 +228,18 @@ export const api = {
       { method: 'DELETE' },
       slug
     );
+  },
+
+  extendPlanExpiration(slug: string, extraDays = 30): Promise<{ snapshot: PlanSnapshot }> {
+    return requestJson(
+      `/api/plans/${encodeURIComponent(slug)}/extend`,
+      { method: 'POST', body: JSON.stringify({ extraDays }) },
+      slug
+    );
+  },
+
+  getExportBackupUrl(slug: string): string {
+    return `/api/plans/${encodeURIComponent(slug)}/export`;
   },
 
   // ---- Wave 2: RSVP, Sub-Polls, Checklist, Carpooling ----

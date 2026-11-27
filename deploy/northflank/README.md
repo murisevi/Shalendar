@@ -16,9 +16,9 @@ Entre las opciones gratuitas evaluadas para **Node.js 22 + SSE + PostgreSQL**, *
 
 ### Opción A — Desde el template JSON (recomendada)
 
-1. Sube el repositorio ya integrado (`master` con `feat/future-improvements` + `docs/deploy-and-persistence`) a GitHub.
-2. En **Northflank → Templates → Create new template → Code**, pega el contenido de [`template.json`](./template.json).
-3. Cambia `"repository": "https://github.com/REPLACE_WITH_YOUR_USER/shalendar"` por tu repo (si es privado, vincula tu cuenta de GitHub en Northflank y selecciona tu repositorio en la UI).
+1. Asegúrate de fusionar esta rama (`docs/deploy-and-persistence`) en `master` y hacer `git push origin master` a `https://github.com/murisevi/Shalendar.git`.
+2. En **Northflank → Templates → Create new template → Code**, pega el contenido de [`template.json`](./template.json) (ya viene preconfigurado con `https://github.com/murisevi/Shalendar.git` y rama `master`).
+3. Si el repositorio es privado, vincula tu cuenta de GitHub en Northflank antes de ejecutar el template y selecciona la autenticación GitHub.
 4. Ejecuta el template: creará automáticamente:
    - El proyecto `shalendar` en `europe-west`.
    - El addon **PostgreSQL 16** (`shalendar-postgres`).

@@ -14,7 +14,9 @@ import type {
   Plan,
   PlanGranularity,
   PlanSnapshot,
+  PlanVisibility,
   PollOption,
+  RetentionPolicy,
   RsvpEntry,
   RsvpStatus,
   SubPoll,
@@ -22,6 +24,14 @@ import type {
   SubPollOption,
   VoteEntry,
 } from '../shared/types.js';
+import {
+  computeExpiresAt,
+  DEFAULT_POST_EVENT_GRACE_DAYS,
+  isPlanExpired,
+  type ExportedPlanBackup,
+  type PlanSummaryItem,
+} from '../shared/persistence.js';
+import { PlanExpiredError, type PurgeSummary } from './persistence/repository.js';
 import {
   AVATAR_COLORS,
   AVATAR_EMOJIS,
@@ -96,6 +106,11 @@ export class ShalendarDB {
         confirmed_duration_minutes INTEGER NOT NULL DEFAULT 180,
         confirmed_timezone TEXT,
         is_demo INTEGER NOT NULL DEFAULT 0,
+        visibility TEXT NOT NULL DEFAULT 'unlisted',
+        retention_policy TEXT NOT NULL DEFAULT 'ephemeral_after_event',
+        retention_days INTEGER NOT NULL DEFAULT 30,
+        last_activity_at TEXT,
+        expires_at TEXT,
         admin_token TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
@@ -238,6 +253,11 @@ export class ShalendarDB {
     this.ensureColumn('plans', 'confirmed_duration_minutes', 'INTEGER NOT NULL DEFAULT 180');
     this.ensureColumn('plans', 'confirmed_timezone', 'TEXT');
     this.ensureColumn('plans', 'is_demo', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('plans', 'visibility', "TEXT NOT NULL DEFAULT 'unlisted'");
+    this.ensureColumn('plans', 'retention_policy', "TEXT NOT NULL DEFAULT 'ephemeral_after_event'");
+    this.ensureColumn('plans', 'retention_days', 'INTEGER NOT NULL DEFAULT 30');
+    this.ensureColumn('plans', 'last_activity_at', 'TEXT');
+    this.ensureColumn('plans', 'expires_at', 'TEXT');
 
     this.ensureColumn('participants', 'participant_token', "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn('participants', 'pin_hash', 'TEXT');
@@ -341,6 +361,13 @@ export class ShalendarDB {
       confirmedTime: row.confirmed_time ? String(row.confirmed_time) : null,
       confirmedDurationMinutes: Number(row.confirmed_duration_minutes ?? 180),
       confirmedTimezone: row.confirmed_timezone ? String(row.confirmed_timezone) : null,
+      visibility: (row.visibility === 'public_demo' || Number(row.is_demo ?? 0) === 1
+        ? 'public_demo'
+        : 'unlisted') as PlanVisibility,
+      retentionPolicy: (String(row.retention_policy ?? 'ephemeral_after_event')) as RetentionPolicy,
+      retentionDays: Number(row.retention_days ?? 30),
+      lastActivityAt: String(row.last_activity_at ?? row.created_at),
+      expiresAt: row.expires_at ? String(row.expires_at) : null,
       createdAt: String(row.created_at),
     };
   }
@@ -362,7 +389,47 @@ export class ShalendarDB {
     const row = this.db
       .prepare('SELECT * FROM plans WHERE slug = ?')
       .get(slug) as Record<string, unknown> | undefined;
-    return row ?? null;
+    if (!row) return null;
+    const isDemo = Number(row.is_demo ?? 0) === 1;
+    const expiresAt = row.expires_at ? String(row.expires_at) : null;
+    if (!isDemo && isPlanExpired(expiresAt)) {
+      this.db.prepare('DELETE FROM plans WHERE id = ?').run(String(row.id));
+      throw new PlanExpiredError();
+    }
+    return row;
+  }
+
+  private touchPlanActivity(planId: string): void {
+    const row = this.db
+      .prepare(
+        'SELECT is_demo, retention_policy, retention_days, confirmed_date, confirmed_end_date FROM plans WHERE id = ?'
+      )
+      .get(planId) as Record<string, unknown> | undefined;
+    if (!row || Number(row.is_demo ?? 0) === 1) return;
+
+    const now = new Date();
+    const policy = String(row.retention_policy ?? 'ephemeral_after_event') as RetentionPolicy;
+    const retentionDays = Number(row.retention_days ?? 30);
+    const confirmedDate = row.confirmed_date ? String(row.confirmed_date) : null;
+    const confirmedEndDate = row.confirmed_end_date ? String(row.confirmed_end_date) : null;
+
+    if (policy === 'sliding_inactivity' || (policy === 'ephemeral_after_event' && !confirmedDate)) {
+      const nextExpiresAt = computeExpiresAt({
+        policy,
+        retentionDays,
+        now,
+        confirmedDate,
+        confirmedEndDate,
+        postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
+      });
+      this.db
+        .prepare('UPDATE plans SET last_activity_at = ?, expires_at = ? WHERE id = ?')
+        .run(now.toISOString(), nextExpiresAt, planId);
+    } else {
+      this.db
+        .prepare('UPDATE plans SET last_activity_at = ? WHERE id = ?')
+        .run(now.toISOString(), planId);
+    }
   }
 
   verifyAdminToken(planRow: Record<string, unknown>, token: string | null | undefined): boolean {
@@ -611,18 +678,11 @@ export class ShalendarDB {
   /**
    * Lists only explicitly public/demo plans so private user plans never leak globally.
    */
-  listPublicPlans(limit = 6): Array<{
-    slug: string;
-    title: string;
-    emoji: string;
-    location: string;
-    participantCount: number;
-    confirmedDate: string | null;
-    createdAt: string;
-  }> {
+  listPublicPlans(limit = 6): PlanSummaryItem[] {
     const rows = this.db
       .prepare(`
         SELECT p.slug, p.title, p.emoji, p.location, p.confirmed_date, p.created_at,
+               p.retention_policy, p.expires_at,
                COUNT(pa.id) AS participant_count
         FROM plans p
         LEFT JOIN participants pa ON pa.plan_id = p.id
@@ -641,36 +701,33 @@ export class ShalendarDB {
       participantCount: Number(r.participant_count ?? 0),
       confirmedDate: r.confirmed_date ? String(r.confirmed_date) : null,
       createdAt: String(r.created_at),
+      retentionPolicy: String(r.retention_policy ?? 'persistent') as RetentionPolicy,
+      expiresAt: r.expires_at ? String(r.expires_at) : null,
     }));
   }
 
   /**
    * Safely hydrates summaries ONLY for specific slugs the user already knows locally.
    */
-  lookupPlansBySlugs(slugs: string[]): Array<{
-    slug: string;
-    title: string;
-    emoji: string;
-    location: string;
-    participantCount: number;
-    confirmedDate: string | null;
-    createdAt: string;
-  }> {
+  lookupPlansBySlugs(slugs: string[]): PlanSummaryItem[] {
     const clean = Array.from(new Set(slugs.map((s) => s.trim()).filter(Boolean))).slice(0, 15);
     if (clean.length === 0) return [];
     const placeholders = clean.map(() => '?').join(', ');
+    const nowIso = new Date().toISOString();
     const rows = this.db
       .prepare(`
         SELECT p.slug, p.title, p.emoji, p.location, p.confirmed_date, p.created_at,
+               p.retention_policy, p.expires_at,
                COUNT(pa.id) AS participant_count
         FROM plans p
         LEFT JOIN participants pa ON pa.plan_id = p.id
         WHERE p.slug IN (${placeholders})
+          AND (p.is_demo = 1 OR p.expires_at IS NULL OR p.expires_at > ?)
         GROUP BY p.id
       `)
-      .all(...clean) as Record<string, unknown>[];
+      .all(...clean, nowIso) as Record<string, unknown>[];
 
-    const bySlug = new Map(
+    const bySlug = new Map<string, PlanSummaryItem>(
       rows.map((r) => [
         String(r.slug),
         {
@@ -681,11 +738,13 @@ export class ShalendarDB {
           participantCount: Number(r.participant_count ?? 0),
           confirmedDate: r.confirmed_date ? String(r.confirmed_date) : null,
           createdAt: String(r.created_at),
+          retentionPolicy: String(r.retention_policy ?? 'ephemeral_after_event') as RetentionPolicy,
+          expiresAt: r.expires_at ? String(r.expires_at) : null,
         },
       ])
     );
 
-    return clean.map((s) => bySlug.get(s)).filter((x): x is NonNullable<typeof x> => Boolean(x));
+    return clean.map((s) => bySlug.get(s)).filter((x): x is PlanSummaryItem => Boolean(x));
   }
 
   createPlan(input: {
@@ -705,6 +764,8 @@ export class ShalendarDB {
     votingDeadline?: string | null;
     blindVoting?: boolean;
     holidayCountry?: HolidayCountry;
+    retentionPolicy?: RetentionPolicy;
+    retentionDays?: number;
     customSlug?: string;
     isDemo?: boolean;
   }): { plan: Plan; participant: Participant; adminToken: string; participantToken: string } {
@@ -717,6 +778,24 @@ export class ShalendarDB {
     const slug = input.customSlug || this.generateSlug(input.title);
     const adminToken = this.generateToken();
     const createdAt = now.toISOString();
+    const isDemo = Boolean(input.isDemo);
+    const visibility: PlanVisibility = isDemo ? 'public_demo' : 'unlisted';
+    const retentionPolicy: RetentionPolicy = isDemo
+      ? 'persistent'
+      : (input.retentionPolicy ?? 'ephemeral_after_event');
+    const retentionDays =
+      retentionPolicy === 'persistent'
+        ? 0
+        : Math.max(1, Math.min(365, input.retentionDays ?? 30));
+    const expiresAt = isDemo
+      ? null
+      : computeExpiresAt({
+          policy: retentionPolicy,
+          retentionDays,
+          now,
+          createdAt: now,
+          postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
+        });
 
     this.db
       .prepare(`
@@ -725,8 +804,9 @@ export class ShalendarDB {
           start_month, end_month, max_votes_per_user, voting_open,
           voting_deadline, blind_voting, granularity, duration_days,
           holiday_country, required_participant_ids, is_demo,
+          visibility, retention_policy, retention_days, last_activity_at, expires_at,
           admin_token, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, '[]', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -743,7 +823,12 @@ export class ShalendarDB {
         input.granularity ?? 'day',
         Math.max(1, Math.min(7, input.durationDays ?? 1)),
         input.holidayCountry ?? 'ES',
-        input.isDemo ? 1 : 0,
+        isDemo ? 1 : 0,
+        visibility,
+        retentionPolicy,
+        retentionDays,
+        createdAt,
+        expiresAt,
         adminToken,
         createdAt
       );
@@ -932,6 +1017,7 @@ export class ShalendarDB {
         }
       }
       this.db.exec('COMMIT');
+      this.touchPlanActivity(planId);
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
@@ -956,6 +1042,7 @@ export class ShalendarDB {
       this.db.prepare('DELETE FROM poll_options WHERE plan_id = ? AND date = ?').run(planId, date);
       this.db.prepare('DELETE FROM votes WHERE plan_id = ? AND date = ?').run(planId, date);
       this.db.exec('COMMIT');
+      this.touchPlanActivity(planId);
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
@@ -1300,10 +1387,14 @@ export class ShalendarDB {
       confirmedTime?: string | null;
       confirmedDurationMinutes?: number;
       confirmedTimezone?: string | null;
+      retentionPolicy?: RetentionPolicy;
+      retentionDays?: number;
     }
   ): Plan | null {
     const row = this.getPlanRowBySlug(slug);
     if (!row) return null;
+    const now = new Date();
+    const isDemo = Number(row.is_demo ?? 0) === 1;
 
     const nextTitle = updates.title !== undefined ? updates.title.trim() : String(row.title);
     const nextDesc = updates.description !== undefined ? updates.description.trim() : String(row.description);
@@ -1365,6 +1456,34 @@ export class ShalendarDB {
         : row.confirmed_timezone
           ? String(row.confirmed_timezone)
           : null;
+    const nextRetentionPolicy: RetentionPolicy = isDemo
+      ? 'persistent'
+      : (updates.retentionPolicy ??
+        (String(row.retention_policy ?? 'ephemeral_after_event') as RetentionPolicy));
+    const nextRetentionDays =
+      nextRetentionPolicy === 'persistent'
+        ? 0
+        : Math.max(1, Math.min(365, updates.retentionDays ?? Number(row.retention_days ?? 30)));
+    const retentionChanged =
+      updates.retentionPolicy !== undefined ||
+      updates.retentionDays !== undefined ||
+      updates.confirmedDate !== undefined ||
+      updates.confirmedEndDate !== undefined;
+    const nextExpiresAt = isDemo
+      ? null
+      : retentionChanged || nextRetentionPolicy === 'sliding_inactivity'
+        ? computeExpiresAt({
+            policy: nextRetentionPolicy,
+            retentionDays: nextRetentionDays,
+            now,
+            createdAt: new Date(String(row.created_at)),
+            confirmedDate: nextConfirmedDate,
+            confirmedEndDate: nextConfirmedEndDate,
+            postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
+          })
+        : row.expires_at
+          ? String(row.expires_at)
+          : null;
 
     this.db
       .prepare(`
@@ -1374,7 +1493,8 @@ export class ShalendarDB {
             voting_deadline = ?, blind_voting = ?, granularity = ?, duration_days = ?,
             holiday_country = ?, required_participant_ids = ?,
             confirmed_date = ?, confirmed_end_date = ?, confirmed_time = ?,
-            confirmed_duration_minutes = ?, confirmed_timezone = ?
+            confirmed_duration_minutes = ?, confirmed_timezone = ?,
+            retention_policy = ?, retention_days = ?, last_activity_at = ?, expires_at = ?
         WHERE id = ?
       `)
       .run(
@@ -1397,11 +1517,70 @@ export class ShalendarDB {
         nextConfirmedTime,
         nextConfirmedDuration,
         nextConfirmedTimezone,
+        nextRetentionPolicy,
+        nextRetentionDays,
+        now.toISOString(),
+        nextExpiresAt,
         String(row.id)
       );
 
     const updated = this.getPlanRowBySlug(slug)!;
     return this.mapPlan(updated);
+  }
+
+  extendPlanExpiration(slug: string, extraDays = 30): Plan | null {
+    const row = this.getPlanRowBySlug(slug);
+    if (!row) return null;
+    if (Number(row.is_demo ?? 0) === 1 || String(row.retention_policy) === 'persistent') {
+      return this.mapPlan(row);
+    }
+    const days = Math.max(1, Math.min(365, Math.round(extraDays)));
+    const nowMs = Date.now();
+    const currentExp = row.expires_at ? String(row.expires_at) : null;
+    const baseMs = currentExp ? Math.max(nowMs, Date.parse(currentExp) || nowMs) : nowMs;
+    const nextExpiresAt = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString();
+    this.db
+      .prepare('UPDATE plans SET expires_at = ?, last_activity_at = ? WHERE id = ?')
+      .run(nextExpiresAt, new Date().toISOString(), String(row.id));
+    return this.mapPlan(this.getPlanRowBySlug(slug)!);
+  }
+
+  exportPlanBackup(slug: string): ExportedPlanBackup<PlanSnapshot> | null {
+    const snapshot = this.getPlanSnapshotBySlug(slug);
+    if (!snapshot) return null;
+    return {
+      format: 'shalendar-backup-v1',
+      exportedAt: new Date().toISOString(),
+      snapshot,
+    };
+  }
+
+  purgeExpiredPlans(now = new Date()): PurgeSummary {
+    const executedAt = now.toISOString();
+    const info = this.db
+      .prepare(
+        'DELETE FROM plans WHERE is_demo = 0 AND expires_at IS NOT NULL AND expires_at <= ?'
+      )
+      .run(executedAt);
+    return {
+      deletedCount: Number(info.changes ?? 0),
+      executedAt,
+    };
+  }
+
+  checkHealth(): { ok: boolean; driver: 'sqlite'; latencyMs: number; error?: string } {
+    const startedAt = Date.now();
+    try {
+      this.db.prepare('SELECT 1').get();
+      return { ok: true, driver: 'sqlite', latencyMs: Date.now() - startedAt };
+    } catch (err) {
+      return {
+        ok: false,
+        driver: 'sqlite',
+        latencyMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : 'SQLite error',
+      };
+    }
   }
 
   /**

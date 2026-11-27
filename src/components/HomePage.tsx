@@ -5,6 +5,7 @@ import {
   CalendarRange,
   CheckCircle2,
   Clock,
+  Database,
   EyeOff,
   MapPin,
   Moon,
@@ -20,7 +21,8 @@ import {
   formatDateLongEs,
 } from '../../shared/dates';
 import { HOLIDAY_COUNTRIES } from '../../shared/holidays';
-import type { HolidayCountry, PlanGranularity } from '../../shared/types';
+import { getRemainingDays, RETENTION_PRESETS } from '../../shared/persistence';
+import type { HolidayCountry, PlanGranularity, RetentionPolicy } from '../../shared/types';
 import {
   getRecentPlans,
   rememberPlan,
@@ -49,6 +51,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
   const [blindVoting, setBlindVoting] = useState(false);
   const [votingDeadline, setVotingDeadline] = useState('');
   const [organizerPin, setOrganizerPin] = useState('');
+  const [retentionPolicy, setRetentionPolicy] = useState<RetentionPolicy>('ephemeral_after_event');
+  const [retentionDays, setRetentionDays] = useState<number>(30);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
@@ -112,6 +116,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
         holidayCountry,
         blindVoting,
         votingDeadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
+        retentionPolicy,
+        retentionDays,
       });
       saveParticipantId(created.plan.slug, created.participant.id);
       saveParticipantToken(created.plan.slug, created.participantToken);
@@ -522,6 +528,41 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                       <EyeOff className="h-3.5 w-3.5 text-amber-600 shrink-0" />
                       <span>Voto oculto hasta cerrar votación (evita el efecto rebaño)</span>
                     </label>
+
+                    {/* Adaptive Persistence / Retention Selector */}
+                    <div className="space-y-2 border-t border-stone-200/70 dark:border-slate-700/70 pt-3">
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-slate-300">
+                        <Database className="h-3.5 w-3.5 text-teal-600" />
+                        Memoria del calendario (sin cuentas)
+                      </span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                        {RETENTION_PRESETS.map((preset) => {
+                          const selected =
+                            retentionPolicy === preset.policy &&
+                            (preset.policy !== 'fixed_ttl' || retentionDays === preset.retentionDays);
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                setRetentionPolicy(preset.policy);
+                                setRetentionDays(preset.retentionDays);
+                              }}
+                              className={`rounded-xl px-2 py-2 text-xs font-semibold border transition cursor-pointer ${
+                                selected
+                                  ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                                  : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
+                              }`}
+                            >
+                              {preset.shortLabel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[11px] text-stone-500 dark:text-slate-400">
+                        {RETENTION_PRESETS.find((p) => p.policy === retentionPolicy)?.description}
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -575,7 +616,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                         {plan.location}
                       </p>
                     )}
-                    <div className="mt-2 flex items-center gap-3 text-xs text-stone-500 dark:text-slate-400">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-slate-400">
                       <span className="inline-flex items-center gap-1">
                         <Users className="h-3.5 w-3.5" />
                         {plan.participantCount} {plan.participantCount === 1 ? 'persona' : 'personas'}
@@ -586,6 +627,16 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                           {formatDateLongEs(plan.confirmedDate)}
                         </span>
                       )}
+                      {(() => {
+                        const rem = getRemainingDays(plan.expiresAt ?? null);
+                        if (rem === null || rem > 7) return null;
+                        return (
+                          <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300 font-medium">
+                            <Clock className="h-3 w-3" />
+                            Caduca en {rem}d
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                 </button>

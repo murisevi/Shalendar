@@ -4,3 +4,4 @@ export * from './migrator.js';
 export * from './repository.js';
 export * from './security.js';
 export * from './purge-worker.js';
+export * from './postgres-store.js';

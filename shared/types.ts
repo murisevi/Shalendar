@@ -1,3 +1,7 @@
+import type { PlanVisibility, RetentionPolicy } from './persistence.js';
+
+export type { PlanVisibility, RetentionPolicy };
+
 export type AvailabilityStatus = 'yes' | 'maybe' | 'no';
 export type AvailabilitySlot = 'all' | 'morning' | 'afternoon' | 'evening';
 export type PlanGranularity = 'day' | 'slots';
@@ -27,6 +31,11 @@ export interface Plan {
   confirmedTime: string | null; // e.g. "20:30"
   confirmedDurationMinutes: number; // default 180
   confirmedTimezone: string | null; // e.g. "Europe/Madrid"
+  visibility?: PlanVisibility;
+  retentionPolicy: RetentionPolicy;
+  retentionDays: number;
+  lastActivityAt: string;
+  expiresAt: string | null;
   createdAt: string;
 }
 
@@ -157,6 +166,8 @@ export interface CreatePlanRequest {
   votingDeadline?: string | null;
   blindVoting?: boolean;
   holidayCountry?: HolidayCountry;
+  retentionPolicy?: RetentionPolicy;
+  retentionDays?: number;
 }
 
 export interface CreatePlanResponse {
@@ -232,6 +243,8 @@ export interface UpdatePlanSettingsRequest {
   confirmedTime?: string | null;
   confirmedDurationMinutes?: number;
   confirmedTimezone?: string | null;
+  retentionPolicy?: RetentionPolicy;
+  retentionDays?: number;
 }
 
 export interface SetRsvpRequest {

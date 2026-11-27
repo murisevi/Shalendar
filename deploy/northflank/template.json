@@ -58,7 +58,7 @@
                   "build": {
                     "type": "git",
                     "repository": {
-                      "repository": "https://github.com/REPLACE_WITH_YOUR_USER/shalendar",
+                      "repository": "https://github.com/murisevi/Shalendar.git",
                       "branch": "master",
                       "authenticationMethod": "public"
                     },

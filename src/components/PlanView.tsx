@@ -1,3 +1,4 @@
+import { dayAvailabilityChanges, personalNoteChanges } from '../lib/availabilityChanges';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -99,11 +100,12 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   const [liveConnected, setLiveConnected] = useState(false);
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
 
+  const [sessionVersion, setSessionVersion] = useState(0);
   const [myParticipantId, setMyParticipantId] = useState<string | null>(() =>
     getSavedParticipantId(slug)
   );
   const [isAdmin, setIsAdmin] = useState<boolean>(
-    () => Boolean(getAdminToken(slug)) || slug === 'cena-reencuentro'
+    () => Boolean(getAdminToken(slug))
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('calendar');
   const [sortMode, setSortMode] = useState<RankingSortMode>('smart');
@@ -158,10 +160,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
   }, [snapshot?.plan, expired, notFound, t.plan.expiredTitle, t.plan.notFoundTitle]);
 
-  // Load initial snapshot + handle cross-device magic tokens (?pt=...&at=...) + SSE (skipInitial=1)
+  // Load initial snapshot and handle cross-device magic tokens (?pt=...&at=...).
   useEffect(() => {
     let cancelled = false;
-    let unsubscribeStream: (() => void) | null = null;
     setLoading(true);
     setNotFound(false);
     setExpired(false);
@@ -196,14 +197,21 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               saveParticipantId(slug, session.participant.id);
               setMyParticipantId(session.participant.id);
               if (pt) showToast(tRef.current.plan.toasts.sessionRestored(session.participant.name));
+            } else {
+              saveParticipantId(slug, null);
+              saveParticipantToken(slug, null);
+              setMyParticipantId(null);
             }
-            setIsAdmin(session.isAdmin || slug === 'cena-reencuentro');
+            if (!session.isAdmin) saveAdminToken(slug, null);
+            setIsAdmin(session.isAdmin);
           }
         } catch {
           // Ignore invalid token
         }
       } else {
-        setIsAdmin(slug === 'cena-reencuentro');
+        saveParticipantId(slug, null);
+        setMyParticipantId(null);
+        setIsAdmin(false);
       }
 
       // 3. Load single initial snapshot
@@ -248,26 +256,6 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           saveParticipantId(slug, null);
           setMyParticipantId(null);
         }
-
-        // 4. Connect SSE with skipInitial=1 to avoid duplicate initial snapshot payload!
-        unsubscribeStream = subscribePlanStream(
-          slug,
-          {
-            onSnapshot: (next) => {
-              if (!cancelled) {
-                setSnapshot(next);
-                if (next.onlineParticipantIds) setOnlineIds(next.onlineParticipantIds);
-              }
-            },
-            onPresence: (online) => {
-              if (!cancelled) setOnlineIds(online);
-            },
-            onConnectionChange: (connected) => {
-              if (!cancelled) setLiveConnected(connected);
-            },
-          },
-          { participantId: savedId, skipInitial: true }
-        );
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.expired) {
@@ -284,9 +272,22 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
 
     return () => {
       cancelled = true;
-      unsubscribeStream?.();
     };
   }, [slug, showToast]);
+
+  // Reconnect after join, recovery (including the same profile), leave, or slug change.
+  // Old stream callbacks also reject snapshots once local session credentials change.
+  useEffect(() => {
+    if (loading || notFound || expired || snapshot?.plan.slug !== slug) return;
+    return subscribePlanStream(slug, {
+      onSnapshot: (next) => {
+        setSnapshot(next);
+        if (next.onlineParticipantIds) setOnlineIds(next.onlineParticipantIds);
+      },
+      onPresence: setOnlineIds,
+      onConnectionChange: setLiveConnected,
+    });
+  }, [slug, loading, notFound, expired, myParticipantId, sessionVersion, snapshot?.plan.slug]);
 
   const me = useMemo(() => {
     if (!snapshot || !myParticipantId) return null;
@@ -406,6 +407,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     setMyParticipantId(res.participant.id);
     saveParticipantId(slug, res.participant.id);
     saveParticipantToken(slug, res.participantToken);
+    setSessionVersion((version) => version + 1);
     showToast(t.plan.toasts.welcomeNew(res.participant.name));
   }
 
@@ -415,6 +417,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     setMyParticipantId(res.participant.id);
     saveParticipantId(slug, res.participant.id);
     saveParticipantToken(slug, res.participantToken);
+    setSessionVersion((version) => version + 1);
     showToast(t.plan.toasts.welcomeBack(res.participant.name));
   }
 
@@ -436,6 +439,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     setSnapshot(res.snapshot);
     saveParticipantId(slug, null);
     saveParticipantToken(slug, null);
+    setSessionVersion((version) => version + 1);
     setMyParticipantId(null);
     showToast(t.plan.toasts.leftPlan);
   }
@@ -653,14 +657,13 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
   }
 
-  function handleExportBackup() {
-    const a = document.createElement('a');
-    a.href = api.getExportBackupUrl(slug);
-    a.download = `${slug}-backup.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast(t.plan.toasts.backupDownloaded);
+  async function handleExportBackup() {
+    try {
+      await api.downloadBackup(slug);
+      showToast(t.plan.toasts.backupDownloaded);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : t.plan.toasts.backupErr, 'err');
+    }
   }
 
   async function handleAddComment(date: string | null, body: string) {
@@ -867,14 +870,16 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
               {t.plan.extend30Btn}
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleExportBackup}
-            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 dark:border-amber-800 bg-white/80 dark:bg-slate-900/70 px-2.5 py-1 text-[11px] font-semibold hover:bg-white transition cursor-pointer"
-          >
-            <Download className="h-3 w-3" />
-            {t.plan.exportJsonBtn}
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleExportBackup}
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 dark:border-amber-800 bg-white/80 dark:bg-slate-900/70 px-2.5 py-1 text-[11px] font-semibold hover:bg-white transition cursor-pointer"
+            >
+              <Download className="h-3 w-3" />
+              {t.plan.exportJsonBtn}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -1039,7 +1044,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       onSelectDate={onSelect}
       onToggleVote={handleToggleVote}
       onCycleMyStatus={(date, nextStatus) =>
-        handleCommitAvailability([{ date, slot: 'all', status: nextStatus }])
+        handleCommitAvailability(dayAvailabilityChanges(date, nextStatus, plan.granularity))
       }
       myVotedDates={myVotedDates}
     />
@@ -1158,6 +1163,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       onSetMyStatus={(d, st, slot = 'all', note) =>
         handleCommitAvailability([{ date: d, slot, status: st, note }])
       }
+      onSetMyDayStatus={(d, st, note) => handleCommitAvailability(dayAvailabilityChanges(d, st, plan.granularity, note))}
+      onSaveMyNote={(d, note) => {
+        if (me) handleCommitAvailability(personalNoteChanges(snapshotRef.current?.availabilities ?? [], me.id, d, note));
+      }}
       onToggleVote={handleToggleVote}
       onAddComment={(d, body) => handleAddComment(d, body)}
       onRequireIdentity={requireIdentity}

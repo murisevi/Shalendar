@@ -1,3 +1,4 @@
+import { useModalDialog } from '../lib/useModalDialog';
 import { useEffect, useState } from 'react';
 import {
   Check,
@@ -60,6 +61,7 @@ export function PlanSettingsModal({
   onDeletePlan,
 }: PlanSettingsModalProps) {
   const { language, t } = useI18n();
+  const { dialogRef, titleId } = useModalDialog(open, onClose);
   const [title, setTitle] = useState(plan.title);
   const [description, setDescription] = useState(plan.description);
   const [location, setLocation] = useState(plan.location);
@@ -136,6 +138,11 @@ export function PlanSettingsModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-xl rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 pt-7 sm:pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 shadow-2xl space-y-5 animate-sheet-sm-pop max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain"
       >
@@ -146,7 +153,7 @@ export function PlanSettingsModal({
               <Settings className="h-5 w-5" />
             </span>
             <div>
-              <h2 className="font-display text-lg font-extrabold tracking-tight">
+              <h2 id={titleId} className="font-display text-lg font-extrabold tracking-tight">
                 {t.settings.title}
               </h2>
               <p className="text-xs text-stone-500 dark:text-slate-400">

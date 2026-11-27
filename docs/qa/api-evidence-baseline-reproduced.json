@@ -1,0 +1,275 @@
+{
+  "generatedAt": "2026-11-27T15:54:41.771Z",
+  "storage": "SQLite :memory:",
+  "total": 36,
+  "passed": 18,
+  "failed": 18,
+  "results": [
+    {
+      "test": "Create private plan",
+      "expected": "201",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "test": "Join as guest",
+      "expected": "201",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "test": "Settings reject anonymous",
+      "expected": "403",
+      "status": 403,
+      "passed": true
+    },
+    {
+      "test": "Guest cannot paint owner days",
+      "expected": "403",
+      "status": 403,
+      "passed": true
+    },
+    {
+      "test": "Owner paints day",
+      "expected": "200",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Owner casts blind vote",
+      "expected": "200",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Vote limit enforced",
+      "expected": "400",
+      "status": 400,
+      "passed": true
+    },
+    {
+      "test": "Anonymous cannot read blind votes",
+      "expected": "votes=[]",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Blind votes cannot be read by spoofing participant ID",
+      "expected": "votes=[] without valid token",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "votesVisible": 1
+      }
+    },
+    {
+      "test": "Organizer backup preserves blind votes",
+      "expected": "backup contains saved vote",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "exportedVotes": 0
+      }
+    },
+    {
+      "test": "Incorrect recovery PIN",
+      "expected": "401",
+      "status": 401,
+      "passed": true
+    },
+    {
+      "test": "Correct recovery PIN",
+      "expected": "200",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Reject PIN shorter than recovery minimum",
+      "expected": "400",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "hasPin": false
+      }
+    },
+    {
+      "test": "Create subpoll authenticated",
+      "expected": "201",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "test": "Only organizer can choose subpoll winner",
+      "expected": "403",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "winnerSaved": true
+      }
+    },
+    {
+      "test": "Anonymous cannot create poll attributed to owner",
+      "expected": "403",
+      "status": 201,
+      "passed": false
+    },
+    {
+      "test": "Anonymous cannot add option attributed to owner",
+      "expected": "403",
+      "status": 201,
+      "passed": false
+    },
+    {
+      "test": "Reject nonexistent winning option",
+      "expected": "400 or 404",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "winnerSaved": "nonexistent-option"
+      }
+    },
+    {
+      "test": "Anonymous cannot complete another user task",
+      "expected": "403",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "completed": true
+      }
+    },
+    {
+      "test": "Anonymous cannot delete task",
+      "expected": "403",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "remaining": 0
+      }
+    },
+    {
+      "test": "Reserve car seat",
+      "expected": "200 joined=true",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Reject overbooking",
+      "expected": "400",
+      "status": 400,
+      "passed": true
+    },
+    {
+      "test": "Anonymous cannot delete another user car",
+      "expected": "403",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "remaining": 0
+      }
+    },
+    {
+      "test": "Reject impossible calendar date",
+      "expected": "400",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "dates": [
+          "2026-12-04",
+          "2026-02-30"
+        ]
+      }
+    },
+    {
+      "test": "Reject reversed range and invalid time/timezone",
+      "expected": "400",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "date": "2026-12-10",
+        "end": "2026-12-01",
+        "time": "99:99",
+        "timezone": "Invalid/Zone"
+      }
+    },
+    {
+      "test": "Reject invalid voting deadline",
+      "expected": "400",
+      "status": 200,
+      "passed": false,
+      "evidence": {
+        "deadline": "not-a-date"
+      }
+    },
+    {
+      "test": "Reject invalid months",
+      "expected": "400",
+      "status": 201,
+      "passed": false,
+      "evidence": {
+        "start": "2026-99",
+        "end": "2026-00"
+      }
+    },
+    {
+      "test": "Reject reversed month interval",
+      "expected": "400",
+      "status": 201,
+      "passed": false
+    },
+    {
+      "test": "Valid checklist assignment",
+      "expected": "201",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "test": "Reject task assigned to participant from other plan",
+      "expected": "400",
+      "status": 201,
+      "passed": false,
+      "evidence": {
+        "foreignIdStored": true
+      }
+    },
+    {
+      "test": "Anonymous cannot nominate on behalf of owner",
+      "expected": "403",
+      "status": 201,
+      "passed": false
+    },
+    {
+      "test": "Voting closed rejects votes",
+      "expected": "400",
+      "status": 400,
+      "passed": true
+    },
+    {
+      "test": "Save RSVP",
+      "expected": "200",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Comment activity extends sliding retention",
+      "expected": "lastActivityAt and expiresAt advance",
+      "status": 201,
+      "passed": false,
+      "evidence": {
+        "activityAdvanced": false,
+        "expiryAdvanced": false
+      }
+    },
+    {
+      "test": "Organizer deletes plan",
+      "expected": "200",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "test": "Deleted plan missing",
+      "expected": "404",
+      "status": 404,
+      "passed": true
+    }
+  ]
+}

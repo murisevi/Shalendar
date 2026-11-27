@@ -20,7 +20,7 @@ import type {
   UpdateParticipantRequest,
   UpdatePlanSettingsRequest,
 } from '../../shared/types';
-import { getAdminToken, getParticipantToken, getSavedLanguage, getSavedParticipantId } from './storage';
+import { getAdminToken, getParticipantToken, getSavedLanguage } from './storage';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -51,10 +51,8 @@ function authHeaders(slug?: string): Record<string, string> {
   const headers: Record<string, string> = {};
   const adminToken = getAdminToken(slug);
   const participantToken = getParticipantToken(slug);
-  const participantId = getSavedParticipantId(slug);
   if (adminToken) headers['X-Admin-Token'] = adminToken;
   if (participantToken) headers['X-Participant-Token'] = participantToken;
-  if (participantId) headers['X-Participant-Id'] = participantId;
   return headers;
 }
 
@@ -239,8 +237,16 @@ export const api = {
     );
   },
 
-  getExportBackupUrl(slug: string): string {
-    return `/api/plans/${encodeURIComponent(slug)}/export`;
+  async downloadBackup(slug: string): Promise<void> {
+    const backup = await requestJson(`/api/plans/${encodeURIComponent(slug)}/export`, undefined, slug);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${slug}-backup.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 
   // ---- Wave 2: RSVP, Sub-Polls, Checklist, Carpooling ----
@@ -377,22 +383,26 @@ export function subscribePlanStream(
     onPresence?: (onlineParticipantIds: string[]) => void;
     onConnectionChange?: (connected: boolean) => void;
   },
-  options?: { participantId?: string | null; skipInitial?: boolean }
+  options?: { skipInitial?: boolean }
 ): () => void {
   const params = new URLSearchParams();
   if (options?.skipInitial) params.set('skipInitial', '1');
   const pToken = getParticipantToken(slug);
   if (pToken) params.set('participantToken', pToken);
-  else if (options?.participantId) params.set('participantId', options.participantId);
 
   const qs = params.toString();
   const es = new EventSource(`/api/plans/${encodeURIComponent(slug)}/stream${qs ? `?${qs}` : ''}`);
 
+  let active = true;
+  const isCurrentSession = () => active && pToken === getParticipantToken(slug);
+
   es.onopen = () => {
+    if (!isCurrentSession()) return;
     callbacks.onConnectionChange?.(true);
   };
 
   es.addEventListener('snapshot', (ev) => {
+    if (!isCurrentSession()) return;
     try {
       const parsed = JSON.parse((ev as MessageEvent).data) as PlanSnapshot;
       callbacks.onSnapshot(parsed);
@@ -403,6 +413,7 @@ export function subscribePlanStream(
   });
 
   es.addEventListener('presence', (ev) => {
+    if (!isCurrentSession()) return;
     try {
       const parsed = JSON.parse((ev as MessageEvent).data) as { onlineParticipantIds: string[] };
       callbacks.onPresence?.(parsed.onlineParticipantIds ?? []);
@@ -413,10 +424,12 @@ export function subscribePlanStream(
   });
 
   es.onerror = () => {
+    if (!isCurrentSession()) return;
     callbacks.onConnectionChange?.(false);
   };
 
   return () => {
+    active = false;
     es.close();
   };
 }

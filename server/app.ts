@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { z } from 'zod';
+import { calendarDateSchema, calendarMonthSchema, clockTimeSchema, timezoneSchema, deadlineSchema, profilePinSchema, ValidationError } from './validation.js';
 import type { ShalendarDB } from './db.js';
 import { PlanEventHub } from './events.js';
 import type { ShalendarStore } from './store.js';
@@ -18,8 +19,6 @@ import {
 } from '../shared/dates.js';
 import { localizeServerError, resolveRequestLanguage } from './i18n.js';
 
-const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
-const isoMonthRegex = /^\d{4}-\d{2}$/;
 const retentionPolicyEnum = z.enum([
   'ephemeral_after_event',
   'fixed_ttl',
@@ -36,12 +35,12 @@ const createPlanSchema = z.object({
   organizerColor: z.string().trim().max(24).optional(),
   organizerEmoji: z.string().trim().max(8).optional(),
   organizerPin: z.string().trim().min(4).max(12).optional(),
-  startMonth: z.string().regex(isoMonthRegex).optional(),
-  endMonth: z.string().regex(isoMonthRegex).optional(),
+  startMonth: calendarMonthSchema.optional(),
+  endMonth: calendarMonthSchema.optional(),
   maxVotesPerUser: z.number().int().min(0).max(20).optional(),
   granularity: z.enum(['day', 'slots']).optional(),
   durationDays: z.number().int().min(1).max(7).optional(),
-  votingDeadline: z.string().max(40).nullable().optional(),
+  votingDeadline: deadlineSchema.nullable().optional(),
   blindVoting: z.boolean().optional(),
   holidayCountry: z.enum(['ES', 'MX', 'AR', 'CO', 'US', 'none']).optional(),
   retentionPolicy: retentionPolicyEnum.optional(),
@@ -72,7 +71,7 @@ const updateParticipantSchema = z.object({
   name: z.string().trim().min(1).max(32).optional(),
   avatarColor: z.string().trim().max(24).optional(),
   avatarEmoji: z.string().trim().max(8).optional(),
-  pin: z.string().trim().max(12).optional(),
+  pin: profilePinSchema.optional(),
 });
 
 const availabilityBatchSchema = z.object({
@@ -80,7 +79,7 @@ const availabilityBatchSchema = z.object({
   changes: z
     .array(
       z.object({
-        date: z.string().regex(isoDateRegex),
+        date: calendarDateSchema,
         slot: z.enum(['all', 'morning', 'afternoon', 'evening']).optional(),
         status: z.enum(['yes', 'maybe', 'no']).nullable(),
         note: z.string().max(160).optional(),
@@ -92,18 +91,18 @@ const availabilityBatchSchema = z.object({
 
 const toggleVoteSchema = z.object({
   participantId: z.string().min(1),
-  date: z.string().regex(isoDateRegex),
+  date: calendarDateSchema,
 });
 
 const nominateDateSchema = z.object({
   participantId: z.string().min(1).optional(),
-  date: z.string().regex(isoDateRegex),
+  date: calendarDateSchema,
   label: z.string().trim().max(80).optional(),
 });
 
 const addCommentSchema = z.object({
   participantId: z.string().min(1),
-  date: z.string().regex(isoDateRegex).nullable().optional(),
+  date: calendarDateSchema.nullable().optional(),
   body: z.string().trim().min(1, 'Escribe un mensaje').max(320),
 });
 
@@ -112,25 +111,21 @@ const updateSettingsSchema = z.object({
   description: z.string().trim().max(400).optional(),
   location: z.string().trim().max(120).optional(),
   emoji: z.string().trim().min(1).max(8).optional(),
-  startMonth: z.string().regex(isoMonthRegex).optional(),
-  endMonth: z.string().regex(isoMonthRegex).optional(),
+  startMonth: calendarMonthSchema.optional(),
+  endMonth: calendarMonthSchema.optional(),
   maxVotesPerUser: z.number().int().min(0).max(20).optional(),
   votingOpen: z.boolean().optional(),
-  votingDeadline: z.string().max(40).nullable().optional(),
+  votingDeadline: deadlineSchema.nullable().optional(),
   blindVoting: z.boolean().optional(),
   granularity: z.enum(['day', 'slots']).optional(),
   durationDays: z.number().int().min(1).max(7).optional(),
   holidayCountry: z.enum(['ES', 'MX', 'AR', 'CO', 'US', 'none']).optional(),
   requiredParticipantIds: z.array(z.string().min(1)).max(30).optional(),
-  confirmedDate: z.string().regex(isoDateRegex).nullable().optional(),
-  confirmedEndDate: z.string().regex(isoDateRegex).nullable().optional(),
-  confirmedTime: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/)
-    .nullable()
-    .optional(),
+  confirmedDate: calendarDateSchema.nullable().optional(),
+  confirmedEndDate: calendarDateSchema.nullable().optional(),
+  confirmedTime: clockTimeSchema.nullable().optional(),
   confirmedDurationMinutes: z.number().int().min(30).max(1440).optional(),
-  confirmedTimezone: z.string().max(64).nullable().optional(),
+  confirmedTimezone: timezoneSchema.nullable().optional(),
   retentionPolicy: retentionPolicyEnum.optional(),
   retentionDays: z.number().int().min(0).max(365).optional(),
 });
@@ -274,6 +269,7 @@ export function createApp(
     if (err instanceof PlanExpiredError) {
       return c.json({ error: localizeServerError(err.message, lang), expired: true }, 410);
     }
+    if (err instanceof ValidationError) return c.json({ error: localizeServerError(err.message, lang) }, 400);
     console.error('[shalendar:api]', err);
     return c.json({ error: localizeServerError('Error interno del servidor', lang) }, 500);
   });
@@ -316,7 +312,17 @@ export function createApp(
       const p = await store.getParticipantByToken(planId, token);
       if (p) return p.id;
     }
-    return c.req.header('x-participant-id') ?? c.req.query('participantId') ?? null;
+    return null;
+  };
+
+  const getAuthorId = async (
+    c: { req: { header: (key: string) => string | undefined } },
+    planId: string,
+    claimedId?: string
+  ): Promise<string | null> => {
+    const token = c.req.header('x-participant-token');
+    const participant = token ? await store.getParticipantByToken(planId, token) : null;
+    return participant && (!claimedId || claimedId === participant.id) ? participant.id : null;
   };
 
   const broadcast = async (slug: string, viewerParticipantId: string | null = null) => {
@@ -407,6 +413,12 @@ export function createApp(
   // Portable JSON backup download (adapts to ephemeral & persistent plans alike)
   app.get('/api/plans/:slug/export', async (c) => {
     const slug = c.req.param('slug');
+    const planRow = await store.getPlanAuthRowBySlug(slug);
+    if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+      return c.json({ error: 'Solo el organizador puede descargar la copia de seguridad' }, 403);
+    }
+    c.header('Cache-Control', 'no-store');
     const backup = await store.exportPlanBackup(slug);
     if (!backup) {
       return c.json({ error: 'No encontramos esa quedada' }, 404);
@@ -735,11 +747,14 @@ export function createApp(
       return c.json({ error: parsed.error.issues[0]?.message || 'Fecha inválida' }, 400);
     }
 
+    const authorId = await getAuthorId(c, planRow.id, parsed.data.participantId);
+    if (!authorId) return c.json({ error: 'Sesión de participante no válida' }, 403);
+
     await store.nominateDate(
       planRow.id,
       parsed.data.date,
       parsed.data.label ?? '',
-      parsed.data.participantId ?? null
+      authorId
     );
     const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot }, 201);
@@ -880,12 +895,15 @@ export function createApp(
       return c.json({ error: parsed.error.issues[0]?.message || 'Encuesta inválida' }, 400);
     }
 
+    const authorId = await getAuthorId(c, planRow.id, parsed.data.participantId);
+    if (!authorId) return c.json({ error: 'Sesión de participante no válida' }, 403);
+
     const pollId = await store.createSubPoll(
       planRow.id,
       parsed.data.category,
       parsed.data.question,
       parsed.data.initialOptions ?? [],
-      parsed.data.participantId ?? null
+      authorId
     );
     const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ pollId, snapshot }, 201);
@@ -903,6 +921,9 @@ export function createApp(
       return c.json({ error: parsed.error.issues[0]?.message || 'Opción inválida' }, 400);
     }
 
+    const authorId = await getAuthorId(c, planRow.id, parsed.data.participantId);
+    if (!authorId) return c.json({ error: 'Sesión de participante no válida' }, 403);
+
     try {
       const optionId = await store.addSubPollOption(
         planRow.id,
@@ -910,7 +931,7 @@ export function createApp(
         parsed.data.title,
         parsed.data.url ?? '',
         parsed.data.estimatedCost ?? '',
-        parsed.data.participantId ?? null
+        authorId
       );
       const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
       return c.json({ optionId, snapshot }, 201);
@@ -962,6 +983,10 @@ export function createApp(
     const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
+    if (!store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+      return c.json({ error: 'Solo el organizador puede elegir la opción ganadora' }, 403);
+    }
+
     const body = await c.req.json().catch(() => null);
     const parsed = setSubPollWinnerSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Datos inválidos' }, 400);
@@ -997,11 +1022,14 @@ export function createApp(
       return c.json({ error: parsed.error.issues[0]?.message || 'Ítem inválido' }, 400);
     }
 
+    const authorId = await getAuthorId(c, planRow.id, parsed.data.participantId);
+    if (!authorId) return c.json({ error: 'Sesión de participante no válida' }, 403);
+
     const itemId = await store.addChecklistItem(
       planRow.id,
       parsed.data.title,
       parsed.data.assignedTo ?? null,
-      parsed.data.participantId ?? null
+      authorId
     );
     const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ itemId, snapshot }, 201);
@@ -1012,6 +1040,10 @@ export function createApp(
     const itemId = c.req.param('itemId');
     const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
+    // Checklist is collaborative for authenticated group members and co-organizers.
+    if (!(await getAuthorId(c, planRow.id)) && !store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+      return c.json({ error: 'Sesión de participante no válida' }, 403);
+    }
 
     const body = await c.req.json().catch(() => null);
     const parsed = updateChecklistSchema.safeParse(body);
@@ -1031,6 +1063,10 @@ export function createApp(
     const itemId = c.req.param('itemId');
     const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
+    // Checklist is collaborative for authenticated group members and co-organizers.
+    if (!(await getAuthorId(c, planRow.id)) && !store.verifyAdminToken(planRow, c.req.header('x-admin-token'))) {
+      return c.json({ error: 'Sesión de participante no válida' }, 403);
+    }
 
     await store.deleteChecklistItem(planRow.id, itemId);
     const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
@@ -1112,6 +1148,14 @@ export function createApp(
     const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
+    const viewerId = await getAuthorId(c, planRow.id);
+    const current = await store.getPlanSnapshotBySlug(slug);
+    const ride = current?.carpools.find((entry) => entry.id === rideId);
+    const isAdmin = store.verifyAdminToken(planRow, c.req.header('x-admin-token'));
+    if (!isAdmin && (!viewerId || ride?.driverId !== viewerId)) {
+      return c.json({ error: 'Solo el conductor o el organizador puede borrar este coche' }, 403);
+    }
+    if (!ride) return c.json({ error: 'Coche no encontrado' }, 404);
     await store.deleteCarpoolRide(planRow.id, rideId);
     const snapshot = await broadcast(slug, await getViewerId(c, planRow.id));
     return c.json({ snapshot });

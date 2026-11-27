@@ -46,6 +46,8 @@ interface DayInspectorProps {
     slot?: AvailabilitySlot,
     note?: string
   ) => void;
+  onSetMyDayStatus: (date: string, status: AvailabilityStatus | null, note?: string) => void;
+  onSaveMyNote: (date: string, note: string) => void;
   onToggleVote: (date: string) => void;
   onAddComment: (date: string, body: string) => void;
   onRequireIdentity: () => void;
@@ -68,6 +70,8 @@ export function DayInspector({
   votingOpen,
   comments,
   onSetMyStatus,
+  onSetMyDayStatus,
+  onSaveMyNote,
   onToggleVote,
   onAddComment,
   onRequireIdentity,
@@ -118,13 +122,7 @@ export function DayInspector({
       return;
     }
     const targetStatus = myStatus === next ? null : next;
-    if (granularity === 'slots') {
-      for (const s of timeSlots) {
-        onSetMyStatus(date, targetStatus, s.id, targetStatus ? personalNoteDraft : undefined);
-      }
-    } else {
-      onSetMyStatus(date, targetStatus, 'all', targetStatus ? personalNoteDraft : undefined);
-    }
+    onSetMyDayStatus(date, targetStatus, targetStatus ? personalNoteDraft : undefined);
   }
 
   function handleToggleSlot(slotId: 'morning' | 'afternoon' | 'evening') {
@@ -146,9 +144,7 @@ export function DayInspector({
       onRequireIdentity();
       return;
     }
-    const statusToKeep: AvailabilityStatus = myStatus ?? 'maybe';
-    const slotToTarget: AvailabilitySlot = granularity === 'slots' ? 'morning' : 'all';
-    onSetMyStatus(date, statusToKeep, slotToTarget, personalNoteDraft.trim());
+    onSaveMyNote(date, personalNoteDraft.trim());
   }
 
   function handleSubmitComment(e: React.FormEvent) {
@@ -309,9 +305,10 @@ export function DayInspector({
             <input
               type="text"
               maxLength={140}
+              disabled={Boolean(me) && !myStatus}
               value={personalNoteDraft}
               onChange={(e) => setPersonalNoteDraft(e.target.value)}
-              placeholder={t.inspector.personalNotePlaceholder}
+              placeholder={me && !myStatus ? t.inspector.personalNoteNeedsStatus : t.inspector.personalNotePlaceholder}
               className={`w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 pl-8 pr-3 ${fieldSize} outline-none focus:border-teal-500 transition`}
             />
           </div>

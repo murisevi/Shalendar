@@ -522,10 +522,11 @@ export function rankBestDates(
   summaries: Map<string, DaySummary>,
   limit = 10,
   mode: RankingSortMode = 'votes',
-  hasRequiredAttendees = false
+  hasRequiredAttendees = false,
+  today = formatDateISO(new Date())
 ): DaySummary[] {
   const list = Array.from(summaries.values()).filter(
-    (s) => s.yes.length > 0 || s.maybe.length > 0 || s.votes.length > 0 || s.pollOption !== null
+    (s) => s.date >= today && (s.yes.length > 0 || s.maybe.length > 0 || s.votes.length > 0 || s.pollOption !== null)
   );
 
   list.sort((a, b) => {
@@ -573,6 +574,7 @@ export function rankBestRanges(params: {
   requiredParticipantIds?: string[];
   holidayCountry?: HolidayCountry;
   limit?: number;
+  today?: string;
 }): DateRangeSummary[] {
   const {
     summaries,
@@ -581,6 +583,7 @@ export function rankBestRanges(params: {
     requiredParticipantIds = [],
     holidayCountry = 'ES',
     limit = 6,
+    today = formatDateISO(new Date()),
   } = params;
 
   if (durationDays < 2 || participants.length === 0) return [];
@@ -603,6 +606,7 @@ export function rankBestRanges(params: {
   const denom = Math.max(participants.length, 1);
 
   for (const startDate of candidateStartDates) {
+    if (startDate < today) continue;
     const dates: string[] = [];
     for (let i = 0; i < durationDays; i++) {
       dates.push(addDaysISO(startDate, i));

@@ -1,5 +1,6 @@
 // QA reproduction harness: isolated SQLite in memory; no changes to application data.
 // Run: node --no-warnings --import tsx docs/qa/audit-probes.mts
+// Subsequent runs preserve the initial audit's api-evidence.json.
 import fs from 'node:fs';
 import { ShalendarDB } from '../../server/db.ts';
 import { createApp } from '../../server/app.ts';
@@ -114,5 +115,6 @@ r = await req(base);
 record('Deleted plan missing', r, '404', r.status === 404);
 db.close();
 const report = { generatedAt: new Date().toISOString(), storage: 'SQLite :memory:', total: results.length, passed: results.filter(r => r.passed).length, failed: results.filter(r => !r.passed).length, results };
-fs.writeFileSync(new URL('./api-evidence.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
+fs.writeFileSync(new URL('./api-evidence-corrections.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify(report, null, 2));
+if (report.failed > 0) process.exitCode = 1;

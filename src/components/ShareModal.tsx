@@ -1,3 +1,4 @@
+import { useModalDialog } from '../lib/useModalDialog';
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import {
@@ -66,6 +67,7 @@ export function ShareModal({
   onToast,
 }: ShareModalProps) {
   const { language, t } = useI18n();
+  const { dialogRef, titleId } = useModalDialog(open, onClose);
   const [tab, setTab] = useState<ShareTab>('whatsapp');
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
@@ -206,6 +208,11 @@ export function ShareModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-md rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 pt-7 sm:pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 shadow-2xl space-y-4 animate-sheet-sm-pop max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain"
       >
@@ -216,7 +223,7 @@ export function ShareModal({
               <Share2 className="h-5 w-5" />
             </span>
             <div>
-              <h2 className="font-display text-lg font-extrabold tracking-tight">
+              <h2 id={titleId} className="font-display text-lg font-extrabold tracking-tight">
                 {t.share.title}
               </h2>
               <p className="text-xs text-stone-500 dark:text-slate-400">

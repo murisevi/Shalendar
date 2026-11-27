@@ -1,0 +1,74 @@
+{
+  "testedAt": "2026-11-27",
+  "baseline": "07fca8e",
+  "slotNote": {
+    "entries": [
+      {
+        "date": "2026-12-05",
+        "note": "Solo puedo por la noche",
+        "participantId": "75886223-5ce9-4d26-9981-4a0f2d7929d8",
+        "slot": "morning",
+        "status": "yes",
+        "updatedAt": "2026-11-27T15:32:42.910Z"
+      },
+      {
+        "date": "2026-12-05",
+        "note": "",
+        "participantId": "75886223-5ce9-4d26-9981-4a0f2d7929d8",
+        "slot": "afternoon",
+        "status": "no",
+        "updatedAt": "2026-11-27T15:32:41.365Z"
+      },
+      {
+        "date": "2026-12-05",
+        "note": "",
+        "participantId": "75886223-5ce9-4d26-9981-4a0f2d7929d8",
+        "slot": "evening",
+        "status": "yes",
+        "updatedAt": "2026-11-27T15:32:41.365Z"
+      }
+    ],
+    "text": "☀️ Mañana\n1✓\n\nTú: Sí\n\n🌤️ Tarde\n0✓\n\nTú: No\n\n🌙 Noche\n1✓\n\nTú: Sí\n\nPueden (1)"
+  },
+  "manualChecks": {
+    "blindSse": {
+      "initial": "Guest joins without reloading; casts blind vote: Voted, 2 of 3 votes left.",
+      "trigger": "Organizer adds a general comment in another browser profile.",
+      "actual": "Vote day, 3 of 3 votes left. Authenticated GET still returns 1 persisted vote.",
+      "expected": "Own vote and remaining count remain visible."
+    },
+    "matrixSlots": {
+      "before": {
+        "morning": "yes",
+        "afternoon": "no",
+        "evening": "no"
+      },
+      "action": "Click own cell in comparison to cycle yes -> maybe.",
+      "actual": "Adds slot=all,status=maybe; old morning=yes remains and UI still reports yes."
+    },
+    "modals": {
+      "shareEscape": "Share remains open; role=dialog count 0; focus remains on background Share button.",
+      "settingsEscape": "Settings remains open; role=dialog count 0."
+    },
+    "pastDates": {
+      "today": "2026-11-27",
+      "plan": "cena-navidad-0e2a",
+      "topSuggestion": "2026-11-05"
+    },
+    "mobile": {
+      "initial": {
+        "width": 375,
+        "documentWidth": 398
+      },
+      "retest": {
+        "width": 375,
+        "documentWidth": 360,
+        "calendar": true,
+        "voting": true,
+        "logistics": true,
+        "group": true
+      },
+      "note": "External source changes landed during audit; original overflow no longer reproduced."
+    }
+  }
+}

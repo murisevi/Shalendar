@@ -1,3 +1,4 @@
+import { validatePlanDates, profilePinSchema, ValidationError } from '../validation.js';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import type {
@@ -250,7 +251,6 @@ export class PostgresShalendarStore implements ShalendarStore {
   }
 
   verifyAdminToken(planRow: PlanAuthRow, token: string | null | undefined): boolean {
-    if (planRow.isDemo) return true;
     return verifyTokenHash(token, planRow.adminTokenOrHash);
   }
 
@@ -258,9 +258,8 @@ export class PostgresShalendarStore implements ShalendarStore {
     planId: string,
     participantId: string,
     token: string | null | undefined,
-    allowDemoPlan = false
+    _allowDemoPlan = false
   ): Promise<boolean> {
-    if (allowDemoPlan) return true;
     if (!token) return false;
     const res = await this.pool.query(
       'SELECT participant_token FROM participants WHERE id = $1 AND plan_id = $2',
@@ -312,7 +311,7 @@ export class PostgresShalendarStore implements ShalendarStore {
 
   async getPlanSnapshotBySlug(
     slug: string,
-    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[] }
+    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[]; includeAllVotes?: boolean }
   ): Promise<PlanSnapshot | null> {
     const planRow = await this.fetchPlanRowBySlug(slug);
     if (!planRow) return null;
@@ -406,7 +405,7 @@ export class PostgresShalendarStore implements ShalendarStore {
       createdAt: toIso(r.created_at),
     }));
 
-    const hideVotes = plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate;
+    const hideVotes = plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate && !options?.includeAllVotes;
     const viewerId = options?.viewerParticipantId ?? null;
     const votes = hideVotes
       ? allVotes.filter((v) => viewerId !== null && v.participantId === viewerId)
@@ -587,6 +586,7 @@ export class PostgresShalendarStore implements ShalendarStore {
     const defaultStart = formatMonthISO(now.getFullYear(), now.getMonth());
     const startMonth = input.startMonth || defaultStart;
     const endMonth = input.endMonth || addMonthsISO(startMonth, 2);
+    validatePlanDates({ startMonth, endMonth, votingDeadline: input.votingDeadline });
 
     const id = crypto.randomUUID();
     const slug = input.customSlug || generateSecureSlug(input.title);
@@ -783,6 +783,10 @@ export class PostgresShalendarStore implements ShalendarStore {
     const existing = existingRes.rows[0];
     if (!existing) throw new Error('Participante no encontrado');
 
+    if (updates.pin !== undefined && !profilePinSchema.safeParse(updates.pin).success) {
+      throw new ValidationError('El PIN debe tener al menos 4 caracteres');
+    }
+
     const nextName = updates.name !== undefined ? updates.name.trim() : String(existing.name);
     if (nextName.toLowerCase() !== String(existing.name).toLowerCase()) {
       const collision = await this.pool.query(
@@ -889,6 +893,7 @@ export class PostgresShalendarStore implements ShalendarStore {
     label = '',
     proposedBy: string | null = null
   ): Promise<void> {
+    await this.assertParticipantInPlan(planId, proposedBy);
     const now = new Date().toISOString();
     await this.pool.query(
       `
@@ -1035,6 +1040,7 @@ export class PostgresShalendarStore implements ShalendarStore {
     initialOptions: Array<{ title: string; url?: string; estimatedCost?: string }> = [],
     proposedBy: string | null = null
   ): Promise<string> {
+    await this.assertParticipantInPlan(planId, proposedBy);
     const pollId = crypto.randomUUID();
     const now = new Date().toISOString();
 
@@ -1073,6 +1079,7 @@ export class PostgresShalendarStore implements ShalendarStore {
     estimatedCost = '',
     proposedBy: string | null = null
   ): Promise<string> {
+    await this.assertParticipantInPlan(planId, proposedBy);
     const poll = await this.pool.query(
       'SELECT id FROM sub_polls WHERE id = $1 AND plan_id = $2',
       [pollId, planId]
@@ -1127,6 +1134,12 @@ export class PostgresShalendarStore implements ShalendarStore {
     pollId: string,
     winnerOptionId: string | null
   ): Promise<void> {
+    const poll = await this.pool.query('SELECT id FROM sub_polls WHERE id = $1 AND plan_id = $2', [pollId, planId]);
+    if (!poll.rows[0]) throw new ValidationError('Encuesta no encontrada');
+    if (winnerOptionId !== null) {
+      const option = await this.pool.query('SELECT id FROM sub_poll_options WHERE id = $1 AND poll_id = $2 AND plan_id = $3', [winnerOptionId, pollId, planId]);
+      if (!option.rows[0]) throw new ValidationError('Opcion no encontrada en esta encuesta');
+    }
     await this.pool.query(
       'UPDATE sub_polls SET winner_option_id = $1 WHERE id = $2 AND plan_id = $3',
       [winnerOptionId, pollId, planId]
@@ -1139,12 +1152,20 @@ export class PostgresShalendarStore implements ShalendarStore {
     await this.touchPlanActivity(planId);
   }
 
+  private async assertParticipantInPlan(planId: string, participantId: string | null): Promise<void> {
+    if (participantId === null) return;
+    const result = await this.pool.query('SELECT id FROM participants WHERE id = $1 AND plan_id = $2', [participantId, planId]);
+    if (!result.rows[0]) throw new ValidationError('Participante no encontrado en esta quedada');
+  }
+
   async addChecklistItem(
     planId: string,
     title: string,
     assignedTo: string | null = null,
     createdBy: string | null = null
   ): Promise<string> {
+    await this.assertParticipantInPlan(planId, assignedTo);
+    await this.assertParticipantInPlan(planId, createdBy);
     const id = crypto.randomUUID();
     await this.pool.query(
       'INSERT INTO checklist_items (id, plan_id, title, assigned_to, completed, created_by, created_at) VALUES ($1, $2, $3, $4, FALSE, $5, $6::timestamptz)',
@@ -1173,6 +1194,7 @@ export class PostgresShalendarStore implements ShalendarStore {
         : existing.assigned_to
           ? String(existing.assigned_to)
           : null;
+    await this.assertParticipantInPlan(planId, nextAssigned);
     const nextCompleted =
       updates.completed !== undefined ? updates.completed : Boolean(existing.completed);
 
@@ -1347,6 +1369,11 @@ export class PostgresShalendarStore implements ShalendarStore {
           ? String(row.confirmed_timezone)
           : null;
 
+    validatePlanDates({
+      startMonth: nextStartMonth, endMonth: nextEndMonth, votingDeadline: nextDeadline,
+      confirmedDate: nextConfirmedDate, confirmedEndDate: nextConfirmedEndDate,
+      confirmedTime: nextConfirmedTime, confirmedTimezone: nextConfirmedTimezone,
+    });
     const nextRetentionPolicy: RetentionPolicy = isDemo
       ? 'persistent'
       : (updates.retentionPolicy ?? asPolicy(row.retention_policy));
@@ -1441,7 +1468,7 @@ export class PostgresShalendarStore implements ShalendarStore {
   }
 
   async exportPlanBackup(slug: string): Promise<ExportedPlanBackup<PlanSnapshot> | null> {
-    const snapshot = await this.getPlanSnapshotBySlug(slug);
+    const snapshot = await this.getPlanSnapshotBySlug(slug, { includeAllVotes: true });
     if (!snapshot) return null;
     return {
       format: 'shalendar-backup-v1',

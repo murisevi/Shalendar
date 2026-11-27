@@ -1,3 +1,4 @@
+import { useModalDialog } from '../lib/useModalDialog';
 import { useEffect, useState } from 'react';
 import { Eye, KeyRound, LogOut, MapPin, Save, UserPlus, X } from 'lucide-react';
 import type { Participant, Plan } from '../../shared/types';
@@ -35,6 +36,7 @@ export function IdentityModal({
   onLeavePlan,
 }: IdentityModalProps) {
   const { t } = useI18n();
+  const { dialogRef, titleId } = useModalDialog(open, onClose);
   const [subTab, setSubTab] = useState<'new' | 'recover'>('new');
   const [name, setName] = useState('');
   const [color, setColor] = useState(AVATAR_COLORS[participantCount % AVATAR_COLORS.length]);
@@ -134,6 +136,11 @@ export function IdentityModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-md rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pt-7 sm:pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 shadow-2xl space-y-5 animate-sheet-sm-pop max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain"
       >
@@ -148,7 +155,7 @@ export function IdentityModal({
                 <p className="text-[11px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-300">
                   {t.identity.invitedEyebrow}
                 </p>
-                <h2 className="font-display text-base font-extrabold tracking-tight text-stone-900 dark:text-white truncate">
+                <h2 id={titleId} className="font-display text-base font-extrabold tracking-tight text-stone-900 dark:text-white truncate">
                   {plan.title}
                 </h2>
                 {plan.location && (
@@ -161,7 +168,7 @@ export function IdentityModal({
             </div>
           ) : (
             <div>
-              <h2 className="font-display text-xl font-extrabold tracking-tight">
+              <h2 id={titleId} className="font-display text-xl font-extrabold tracking-tight">
                 {t.identity.editTitle}
               </h2>
               <p className="text-xs text-stone-500 dark:text-slate-400">
@@ -222,7 +229,7 @@ export function IdentityModal({
               </p>
               <input
                 type="text"
-                autoFocus
+                data-autofocus
                 required
                 maxLength={32}
                 value={name}
@@ -252,7 +259,7 @@ export function IdentityModal({
                 </span>
                 <input
                   type="text"
-                  autoFocus
+                  data-autofocus
                   required
                   maxLength={32}
                   value={name}

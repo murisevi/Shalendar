@@ -1,3 +1,4 @@
+import { validatePlanDates, profilePinSchema, ValidationError } from './validation.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -435,7 +436,6 @@ export class ShalendarDB {
   }
 
   verifyAdminToken(planRow: Record<string, unknown>, token: string | null | undefined): boolean {
-    if (Number(planRow.is_demo ?? 0) === 1) return true;
     if (!token) return false;
     return safeTimingEqual(String(planRow.admin_token), token);
   }
@@ -444,9 +444,8 @@ export class ShalendarDB {
     planId: string,
     participantId: string,
     token: string | null | undefined,
-    allowDemoPlan = false
+    _allowDemoPlan = false
   ): boolean {
-    if (allowDemoPlan) return true;
     if (!token) return false;
     const row = this.db
       .prepare('SELECT participant_token FROM participants WHERE id = ? AND plan_id = ?')
@@ -494,7 +493,7 @@ export class ShalendarDB {
 
   getPlanSnapshotBySlug(
     slug: string,
-    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[] }
+    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[]; includeAllVotes?: boolean }
   ): PlanSnapshot | null {
     const planRow = this.getPlanRowBySlug(slug);
     if (!planRow) return null;
@@ -542,7 +541,7 @@ export class ShalendarDB {
 
     // Blind voting masks other voters while voting is open & date is unconfirmed
     const hideVotes =
-      plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate;
+      plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate && !options?.includeAllVotes;
     const viewerId = options?.viewerParticipantId ?? null;
     const votes = hideVotes
       ? allVotes.filter((v) => viewerId !== null && v.participantId === viewerId)
@@ -775,6 +774,7 @@ export class ShalendarDB {
     const defaultStart = formatMonthISO(now.getFullYear(), now.getMonth());
     const startMonth = input.startMonth || defaultStart;
     const endMonth = input.endMonth || addMonthsISO(startMonth, 2);
+    validatePlanDates({ startMonth, endMonth, votingDeadline: input.votingDeadline });
 
     const id = this.generateId();
     const slug = input.customSlug || this.generateSlug(input.title);
@@ -918,6 +918,7 @@ export class ShalendarDB {
     const row = this.db
       .prepare('SELECT * FROM participants WHERE id = ?')
       .get(id) as Record<string, unknown>;
+    this.touchPlanActivity(planId);
     return {
       participant: this.mapParticipant(row),
       participantToken,
@@ -933,6 +934,10 @@ export class ShalendarDB {
       .prepare('SELECT * FROM participants WHERE id = ? AND plan_id = ?')
       .get(participantId, planId) as Record<string, unknown> | undefined;
     if (!existing) throw new Error('Participante no encontrado');
+
+    if (updates.pin !== undefined && !profilePinSchema.safeParse(updates.pin).success) {
+      throw new ValidationError('El PIN debe tener al menos 4 caracteres');
+    }
 
     const nextName = updates.name !== undefined ? updates.name.trim() : String(existing.name);
     if (nextName.toLowerCase() !== String(existing.name).toLowerCase()) {
@@ -962,6 +967,7 @@ export class ShalendarDB {
     const updated = this.db
       .prepare('SELECT * FROM participants WHERE id = ?')
       .get(participantId) as Record<string, unknown>;
+    this.touchPlanActivity(planId);
     return this.mapParticipant(updated);
   }
 
@@ -969,6 +975,7 @@ export class ShalendarDB {
     const info = this.db
       .prepare('DELETE FROM participants WHERE id = ? AND plan_id = ?')
       .run(participantId, planId);
+    if (Number(info.changes) > 0) this.touchPlanActivity(planId);
     return Number(info.changes) > 0;
   }
 
@@ -1027,6 +1034,7 @@ export class ShalendarDB {
   }
 
   nominateDate(planId: string, date: string, label = '', proposedBy: string | null = null): void {
+    this.assertParticipantInPlan(planId, proposedBy);
     const now = new Date().toISOString();
     this.db
       .prepare(`
@@ -1036,6 +1044,7 @@ export class ShalendarDB {
         DO UPDATE SET label = CASE WHEN excluded.label != '' THEN excluded.label ELSE poll_options.label END
       `)
       .run(planId, date, label.trim(), proposedBy, now);
+    this.touchPlanActivity(planId);
   }
 
   removePollOption(planId: string, date: string): void {
@@ -1083,6 +1092,7 @@ export class ShalendarDB {
       this.db
         .prepare('DELETE FROM votes WHERE plan_id = ? AND participant_id = ? AND date = ?')
         .run(planId, participantId, date);
+      this.touchPlanActivity(planId);
       return { voted: false };
     }
 
@@ -1104,6 +1114,7 @@ export class ShalendarDB {
       .prepare('INSERT INTO votes (plan_id, participant_id, date, created_at) VALUES (?, ?, ?, ?)')
       .run(planId, participantId, date, now);
 
+    this.touchPlanActivity(planId);
     return { voted: true };
   }
 
@@ -1119,6 +1130,7 @@ export class ShalendarDB {
       .prepare('INSERT INTO comments (id, plan_id, participant_id, date, body, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, planId, participantId, date, body.trim(), createdAt);
 
+    this.touchPlanActivity(planId);
     return {
       id,
       participantId,
@@ -1150,6 +1162,7 @@ export class ShalendarDB {
         DO UPDATE SET status = excluded.status, guests_count = excluded.guests_count, note = excluded.note, updated_at = excluded.updated_at
       `)
       .run(planId, participantId, status, Math.max(0, Math.min(10, guestsCount)), note.trim(), now);
+    this.touchPlanActivity(planId);
   }
 
   // ---- Sub-Polls (Where / What) ----
@@ -1160,6 +1173,7 @@ export class ShalendarDB {
     initialOptions: Array<{ title: string; url?: string; estimatedCost?: string }> = [],
     proposedBy: string | null = null
   ): string {
+    this.assertParticipantInPlan(planId, proposedBy);
     const pollId = this.generateId();
     const now = new Date().toISOString();
 
@@ -1191,6 +1205,7 @@ export class ShalendarDB {
       throw err;
     }
 
+    this.touchPlanActivity(planId);
     return pollId;
   }
 
@@ -1202,6 +1217,7 @@ export class ShalendarDB {
     estimatedCost = '',
     proposedBy: string | null = null
   ): string {
+    this.assertParticipantInPlan(planId, proposedBy);
     const poll = this.db
       .prepare('SELECT id FROM sub_polls WHERE id = ? AND plan_id = ?')
       .get(pollId, planId);
@@ -1214,6 +1230,7 @@ export class ShalendarDB {
         'INSERT INTO sub_poll_options (id, poll_id, plan_id, title, url, estimated_cost, proposed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(id, pollId, planId, title.trim(), url.trim(), estimatedCost.trim(), proposedBy, now);
+    this.touchPlanActivity(planId);
     return id;
   }
 
@@ -1236,36 +1253,55 @@ export class ShalendarDB {
       this.db
         .prepare('DELETE FROM sub_poll_votes WHERE poll_id = ? AND option_id = ? AND participant_id = ?')
         .run(pollId, optionId, participantId);
+      this.touchPlanActivity(planId);
       return { voted: false };
     }
 
     this.db
       .prepare('INSERT INTO sub_poll_votes (plan_id, poll_id, option_id, participant_id, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(planId, pollId, optionId, participantId, new Date().toISOString());
+    this.touchPlanActivity(planId);
     return { voted: true };
   }
 
   setSubPollWinner(planId: string, pollId: string, winnerOptionId: string | null): void {
+    const poll = this.db.prepare('SELECT id FROM sub_polls WHERE id = ? AND plan_id = ?').get(pollId, planId);
+    if (!poll) throw new ValidationError('Encuesta no encontrada');
+    if (winnerOptionId !== null) {
+      const option = this.db.prepare('SELECT id FROM sub_poll_options WHERE id = ? AND poll_id = ? AND plan_id = ?').get(winnerOptionId, pollId, planId);
+      if (!option) throw new ValidationError('Opcion no encontrada en esta encuesta');
+    }
     this.db
       .prepare('UPDATE sub_polls SET winner_option_id = ? WHERE id = ? AND plan_id = ?')
       .run(winnerOptionId, pollId, planId);
+    this.touchPlanActivity(planId);
   }
 
   deleteSubPoll(planId: string, pollId: string): void {
     this.db.prepare('DELETE FROM sub_polls WHERE id = ? AND plan_id = ?').run(pollId, planId);
+    this.touchPlanActivity(planId);
   }
 
   // ---- Checklist ("¿Quién lleva qué?") ----
+  private assertParticipantInPlan(planId: string, participantId: string | null): void {
+    if (participantId === null) return;
+    const row = this.db.prepare('SELECT id FROM participants WHERE id = ? AND plan_id = ?').get(participantId, planId);
+    if (!row) throw new ValidationError('Participante no encontrado en esta quedada');
+  }
+
   addChecklistItem(
     planId: string,
     title: string,
     assignedTo: string | null = null,
     createdBy: string | null = null
   ): string {
+    this.assertParticipantInPlan(planId, assignedTo);
+    this.assertParticipantInPlan(planId, createdBy);
     const id = this.generateId();
     this.db
       .prepare('INSERT INTO checklist_items (id, plan_id, title, assigned_to, completed, created_by, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)')
       .run(id, planId, title.trim(), assignedTo, createdBy, new Date().toISOString());
+    this.touchPlanActivity(planId);
     return id;
   }
 
@@ -1286,16 +1322,19 @@ export class ShalendarDB {
         : existing.assigned_to
           ? String(existing.assigned_to)
           : null;
+    this.assertParticipantInPlan(planId, nextAssigned);
     const nextCompleted =
       updates.completed !== undefined ? (updates.completed ? 1 : 0) : Number(existing.completed);
 
     this.db
       .prepare('UPDATE checklist_items SET title = ?, assigned_to = ?, completed = ? WHERE id = ? AND plan_id = ?')
       .run(nextTitle, nextAssigned, nextCompleted, itemId, planId);
+    this.touchPlanActivity(planId);
   }
 
   deleteChecklistItem(planId: string, itemId: string): void {
     this.db.prepare('DELETE FROM checklist_items WHERE id = ? AND plan_id = ?').run(itemId, planId);
+    this.touchPlanActivity(planId);
   }
 
   // ---- Carpooling ----
@@ -1327,6 +1366,7 @@ export class ShalendarDB {
         notes.trim(),
         new Date().toISOString()
       );
+    this.touchPlanActivity(planId);
     return id;
   }
 
@@ -1346,6 +1386,7 @@ export class ShalendarDB {
       this.db
         .prepare('DELETE FROM carpool_passengers WHERE ride_id = ? AND participant_id = ?')
         .run(rideId, participantId);
+      this.touchPlanActivity(planId);
       return { joined: false };
     }
 
@@ -1359,11 +1400,13 @@ export class ShalendarDB {
     this.db
       .prepare('INSERT INTO carpool_passengers (plan_id, ride_id, participant_id, created_at) VALUES (?, ?, ?, ?)')
       .run(planId, rideId, participantId, new Date().toISOString());
+    this.touchPlanActivity(planId);
     return { joined: true };
   }
 
   deleteCarpoolRide(planId: string, rideId: string): void {
     this.db.prepare('DELETE FROM carpool_rides WHERE id = ? AND plan_id = ?').run(rideId, planId);
+    this.touchPlanActivity(planId);
   }
 
   // ---- Plan Settings ----
@@ -1458,6 +1501,11 @@ export class ShalendarDB {
         : row.confirmed_timezone
           ? String(row.confirmed_timezone)
           : null;
+    validatePlanDates({
+      startMonth: nextStartMonth, endMonth: nextEndMonth, votingDeadline: nextDeadline,
+      confirmedDate: nextConfirmedDate, confirmedEndDate: nextConfirmedEndDate,
+      confirmedTime: nextConfirmedTime, confirmedTimezone: nextConfirmedTimezone,
+    });
     const nextRetentionPolicy: RetentionPolicy = isDemo
       ? 'persistent'
       : (updates.retentionPolicy ??
@@ -1548,7 +1596,7 @@ export class ShalendarDB {
   }
 
   exportPlanBackup(slug: string): ExportedPlanBackup<PlanSnapshot> | null {
-    const snapshot = this.getPlanSnapshotBySlug(slug);
+    const snapshot = this.getPlanSnapshotBySlug(slug, { includeAllVotes: true });
     if (!snapshot) return null;
     return {
       format: 'shalendar-backup-v1',

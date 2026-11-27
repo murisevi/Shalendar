@@ -160,6 +160,7 @@ export interface Translations {
       extendedExpiration: (days: number) => string;
       extendErr: string;
       backupDownloaded: string;
+      backupErr: string;
       commentErr: string;
       rsvpUpdated: string;
       rsvpErr: string;
@@ -237,6 +238,7 @@ export interface Translations {
     youMaybe: string;
     youNo: string;
     personalNotePlaceholder: string;
+    personalNoteNeedsStatus: string;
     saveNoteTitle: string;
     groupYes: string;
     groupMaybe: string;
@@ -664,6 +666,7 @@ const ES: Translations = {
       extendedExpiration: (days) => `Duración extendida +${days} días`,
       extendErr: 'No se pudo extender',
       backupDownloaded: 'Copia .json descargada',
+      backupErr: 'No se pudo descargar la copia de seguridad',
       commentErr: 'Error al enviar nota',
       rsvpUpdated: 'Asistencia actualizada',
       rsvpErr: 'Error al guardar RSVP',
@@ -736,6 +739,7 @@ const ES: Translations = {
     youMaybe: 'Tú: Quizá',
     youNo: 'Tú: No',
     personalNotePlaceholder: 'Tu aclaración (ej: solo a partir de las 20:00)...',
+    personalNoteNeedsStatus: 'Marca tu disponibilidad para añadir una aclaración',
     saveNoteTitle: 'Guardar aclaración',
     groupYes: 'Pueden',
     groupMaybe: 'Quizá',
@@ -1187,6 +1191,7 @@ const EN: Translations = {
       extendedExpiration: (days) => `Expiration extended by +${days} days`,
       extendErr: 'Could not extend expiration',
       backupDownloaded: '.json backup downloaded',
+      backupErr: 'Could not download the backup',
       commentErr: 'Failed to post note',
       rsvpUpdated: 'RSVP updated',
       rsvpErr: 'Failed to save RSVP',
@@ -1259,6 +1264,7 @@ const EN: Translations = {
     youMaybe: 'You: Maybe',
     youNo: 'You: No',
     personalNotePlaceholder: 'Your note (e.g. only free after 8 PM)...',
+    personalNoteNeedsStatus: 'Mark your availability to add a note',
     saveNoteTitle: 'Save note',
     groupYes: 'Available',
     groupMaybe: 'Maybe',

@@ -74,11 +74,11 @@ describe('shared date, holiday, slot, range & export logic', () => {
     expect(summaries.get('2026-12-19')?.allRequiredAvailable).toBe(false);
 
     // Strict votes mode puts 12-19 first (2 votes vs 1)
-    const rankedByVotes = rankBestDates(summaries, 10, 'votes');
+    const rankedByVotes = rankBestDates(summaries, 10, 'votes', false, '2026-11-27');
     expect(rankedByVotes[0].date).toBe('2026-12-19');
 
     // Smart mode with required attendee Sara (p3) puts 12-12 first!
-    const rankedSmart = rankBestDates(summaries, 10, 'smart', true);
+    const rankedSmart = rankBestDates(summaries, 10, 'smart', true, '2026-11-27');
     expect(rankedSmart[0].date).toBe('2026-12-12');
   });
 
@@ -105,6 +105,7 @@ describe('shared date, holiday, slot, range & export logic', () => {
       summaries,
       participants,
       durationDays: 3,
+      today: '2026-11-27',
       holidayCountry: 'ES',
     });
 
@@ -328,7 +329,7 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
 
     const pollRes = await app.request(`/api/plans/${slug}/sub-polls`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Participant-Token': created.participantToken },
       body: JSON.stringify({
         participantId: created.participant.id,
         category: 'place',
@@ -355,7 +356,7 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
 
     const taskRes = await app.request(`/api/plans/${slug}/checklist`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Participant-Token': joined.participantToken },
       body: JSON.stringify({ title: 'Comprar carbón', assignedTo: joined.participant.id }),
     });
     expect(taskRes.status).toBe(201);
@@ -459,7 +460,7 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
     expect(Date.parse(extended.plan.expiresAt)).toBeGreaterThan(Date.parse(created.plan.expiresAt!));
 
     // Export portable JSON backup
-    const exportRes = await app.request(`/api/plans/${slug}/export`);
+    const exportRes = await app.request(`/api/plans/${slug}/export`, { headers: { 'X-Admin-Token': created.adminToken } });
     expect(exportRes.status).toBe(200);
     const backup = (await exportRes.json()) as { format: string; snapshot: { plan: { slug: string } } };
     expect(backup.format).toBe('shalendar-backup-v1');

@@ -4,6 +4,7 @@ import type {
   DateRangeSummary,
   DaySummary,
   HolidayCountry,
+  Language,
   Participant,
   PlanGranularity,
   PollOption,
@@ -45,7 +46,18 @@ export const TIME_SLOTS: Array<{
   { id: 'evening', label: 'Noche', shortLabel: 'N', emoji: '🌙', hint: '20:00+' },
 ];
 
+export const TIME_SLOTS_EN: typeof TIME_SLOTS = [
+  { id: 'morning', label: 'Morning', shortLabel: 'M', emoji: '☀️', hint: '09:00–14:00' },
+  { id: 'afternoon', label: 'Afternoon', shortLabel: 'A', emoji: '🌤️', hint: '14:00–20:00' },
+  { id: 'evening', label: 'Evening', shortLabel: 'E', emoji: '🌙', hint: '20:00+' },
+];
+
+export function getTimeSlots(lang: Language = 'es') {
+  return lang === 'en' ? TIME_SLOTS_EN : TIME_SLOTS;
+}
+
 export const WEEKDAYS_SHORT_ES = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+export const WEEKDAYS_SHORT_EN = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 export const WEEKDAYS_LONG_ES = [
   'domingo',
   'lunes',
@@ -54,6 +66,15 @@ export const WEEKDAYS_LONG_ES = [
   'jueves',
   'viernes',
   'sábado',
+];
+export const WEEKDAYS_LONG_EN = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
 ];
 export const MONTHS_LONG_ES = [
   'enero',
@@ -69,6 +90,20 @@ export const MONTHS_LONG_ES = [
   'noviembre',
   'diciembre',
 ];
+export const MONTHS_LONG_EN = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 export const MONTHS_SHORT_ES = [
   'ene',
   'feb',
@@ -83,6 +118,24 @@ export const MONTHS_SHORT_ES = [
   'nov',
   'dic',
 ];
+export const MONTHS_SHORT_EN = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+export function getWeekdaysShort(lang: Language = 'es'): string[] {
+  return lang === 'en' ? WEEKDAYS_SHORT_EN : WEEKDAYS_SHORT_ES;
+}
 
 export function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -118,24 +171,57 @@ export function addMonthsISO(ym: string, delta: number): string {
   return formatMonthISO(d.getFullYear(), d.getMonth());
 }
 
-export function getMonthLabelEs(ym: string): string {
+export function getMonthLabel(ym: string, lang: Language = 'es'): string {
   const { year, month } = parseMonthISO(ym);
-  const name = MONTHS_LONG_ES[month] ?? '';
+  const months = lang === 'en' ? MONTHS_LONG_EN : MONTHS_LONG_ES;
+  const name = months[month] ?? '';
   return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${year}`;
 }
 
-export function formatDateLongEs(iso: string): string {
+export function getMonthShortLabel(ym: string, lang: Language = 'es'): string {
+  const { month } = parseMonthISO(ym);
+  const months = lang === 'en' ? MONTHS_SHORT_EN : MONTHS_SHORT_ES;
+  const name = months[month] ?? '';
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}
+
+export function getMonthLabelEs(ym: string): string {
+  return getMonthLabel(ym, 'es');
+}
+
+export function formatDateLong(iso: string, lang: Language = 'es'): string {
   const d = parseDateISO(iso);
+  if (lang === 'en') {
+    const wd = WEEKDAYS_LONG_EN[d.getDay()];
+    const month = MONTHS_LONG_EN[d.getMonth()];
+    return `${wd}, ${month} ${d.getDate()}`;
+  }
   const wd = WEEKDAYS_LONG_ES[d.getDay()];
   const day = d.getDate();
   const month = MONTHS_LONG_ES[d.getMonth()];
   return `${wd.charAt(0).toUpperCase()}${wd.slice(1)}, ${day} de ${month}`;
 }
 
-export function formatDateRangeEs(startIso: string, endIso: string | null | undefined): string {
-  if (!endIso || endIso <= startIso) return formatDateLongEs(startIso);
+export function formatDateLongEs(iso: string): string {
+  return formatDateLong(iso, 'es');
+}
+
+export function formatDateRange(
+  startIso: string,
+  endIso: string | null | undefined,
+  lang: Language = 'es'
+): string {
+  if (!endIso || endIso <= startIso) return formatDateLong(startIso, lang);
   const s = parseDateISO(startIso);
   const e = parseDateISO(endIso);
+  if (lang === 'en') {
+    const sWd = WEEKDAYS_LONG_EN[s.getDay()].slice(0, 3);
+    const eWd = WEEKDAYS_LONG_EN[e.getDay()].slice(0, 3);
+    if (s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
+      return `${sWd} ${s.getDate()} – ${eWd} ${e.getDate()} ${MONTHS_SHORT_EN[s.getMonth()]}`;
+    }
+    return `${sWd} ${MONTHS_SHORT_EN[s.getMonth()]} ${s.getDate()} – ${eWd} ${MONTHS_SHORT_EN[e.getMonth()]} ${e.getDate()}`;
+  }
   const sWd = WEEKDAYS_LONG_ES[s.getDay()].slice(0, 3);
   const eWd = WEEKDAYS_LONG_ES[e.getDay()].slice(0, 3);
   const cap = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
@@ -145,20 +231,38 @@ export function formatDateRangeEs(startIso: string, endIso: string | null | unde
   return `${cap(sWd)} ${s.getDate()} ${MONTHS_SHORT_ES[s.getMonth()]} – ${cap(eWd)} ${e.getDate()} ${MONTHS_SHORT_ES[e.getMonth()]}`;
 }
 
-export function formatDateShortPartsEs(iso: string): {
+export function formatDateRangeEs(startIso: string, endIso: string | null | undefined): string {
+  return formatDateRange(startIso, endIso, 'es');
+}
+
+export function formatDateShortParts(
+  iso: string,
+  lang: Language = 'es'
+): {
   weekday: string;
   day: number;
   month: string;
   year: number;
 } {
   const d = parseDateISO(iso);
-  const wd = WEEKDAYS_LONG_ES[d.getDay()].slice(0, 3).toUpperCase();
+  const weekdays = lang === 'en' ? WEEKDAYS_LONG_EN : WEEKDAYS_LONG_ES;
+  const monthsShort = lang === 'en' ? MONTHS_SHORT_EN : MONTHS_SHORT_ES;
+  const wd = weekdays[d.getDay()].slice(0, 3).toUpperCase();
   return {
     weekday: wd,
     day: d.getDate(),
-    month: MONTHS_SHORT_ES[d.getMonth()].toUpperCase(),
+    month: monthsShort[d.getMonth()].toUpperCase(),
     year: d.getFullYear(),
   };
+}
+
+export function formatDateShortPartsEs(iso: string): {
+  weekday: string;
+  day: number;
+  month: string;
+  year: number;
+} {
+  return formatDateShortParts(iso, 'es');
 }
 
 export interface CalendarCell {
@@ -598,6 +702,7 @@ export function buildIcsContent(params: {
   durationMinutes?: number;
   timezone?: string | null;
   url?: string;
+  lang?: Language;
 }): string {
   const cleanDate = params.date.replace(/-/g, '');
   const uid = `shalendar-${cleanDate}-${Math.random().toString(36).slice(2, 10)}@shalendar.app`;
@@ -636,11 +741,13 @@ export function buildIcsContent(params: {
     ];
   }
 
-  const descParts = [params.description, params.url ? `Ver quedada: ${params.url}` : ''].filter(Boolean);
+  const viewPrefix = params.lang === 'en' ? 'View plan' : 'Ver quedada';
+  const prodId = params.lang === 'en' ? '-//Shalendar//Plans//EN' : '-//Shalendar//Quedadas//ES';
+  const descParts = [params.description, params.url ? `${viewPrefix}: ${params.url}` : ''].filter(Boolean);
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Shalendar//Quedadas//ES',
+    `PRODID:${prodId}`,
     'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
     `UID:${uid}`,

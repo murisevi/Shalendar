@@ -61,7 +61,9 @@ export class ShalendarDB {
   constructor(dbPath: string) {
     if (dbPath !== ':memory:') {
       const dir = path.dirname(dbPath);
-      fs.mkdirSync(dir, { recursive: true });
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
     }
     this.db = new DatabaseSync(dbPath);
     this.db.exec('PRAGMA journal_mode = WAL;');

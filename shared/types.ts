@@ -2,6 +2,7 @@ import type { PlanVisibility, RetentionPolicy } from './persistence.js';
 
 export type { PlanVisibility, RetentionPolicy };
 
+export type Language = 'es' | 'en';
 export type AvailabilityStatus = 'yes' | 'maybe' | 'no';
 export type AvailabilitySlot = 'all' | 'morning' | 'afternoon' | 'evening';
 export type PlanGranularity = 'day' | 'slots';

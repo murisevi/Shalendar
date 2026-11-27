@@ -1,3 +1,5 @@
+import type { Language } from './types.js';
+
 export type RetentionPolicy =
   | 'ephemeral_after_event'
   | 'fixed_ttl'
@@ -69,6 +71,49 @@ export const RETENTION_PRESETS: readonly RetentionPreset[] = [
       'Sin borrado automático. El organizador puede archivarlo o borrarlo manualmente cuando quiera.',
   },
 ] as const;
+
+export const RETENTION_PRESETS_EN: readonly RetentionPreset[] = [
+  {
+    id: 'ephemeral-default',
+    policy: 'ephemeral_after_event',
+    retentionDays: 30,
+    label: 'Ephemeral (recommended)',
+    shortLabel: 'Ephemeral',
+    description:
+      'Automatically deleted 14 days after the confirmed date (or 30 days of inactivity). Ideal for one-off hangouts.',
+    recommended: true,
+  },
+  {
+    id: 'express-7d',
+    policy: 'fixed_ttl',
+    retentionDays: 7,
+    label: 'Temporary (7 days)',
+    shortLabel: '7 days',
+    description: 'Automatically deleted 7 days after creation. Fast link with no trace left behind.',
+  },
+  {
+    id: 'sliding-90d',
+    policy: 'sliding_inactivity',
+    retentionDays: 90,
+    label: 'While active',
+    shortLabel: 'By activity',
+    description:
+      'Stays active indefinitely while updates happen and expires after 90 days of inactivity.',
+  },
+  {
+    id: 'persistent',
+    policy: 'persistent',
+    retentionDays: 0,
+    label: 'Persistent',
+    shortLabel: 'Persistent',
+    description:
+      'No automatic deletion. The organizer can archive or delete it manually anytime.',
+  },
+] as const;
+
+export function getRetentionPresets(lang: Language = 'es'): readonly RetentionPreset[] {
+  return lang === 'en' ? RETENTION_PRESETS_EN : RETENTION_PRESETS;
+}
 
 export const DEFAULT_POST_EVENT_GRACE_DAYS = 14;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

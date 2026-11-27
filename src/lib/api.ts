@@ -20,7 +20,7 @@ import type {
   UpdateParticipantRequest,
   UpdatePlanSettingsRequest,
 } from '../../shared/types';
-import { getAdminToken, getParticipantToken, getSavedParticipantId } from './storage';
+import { getAdminToken, getParticipantToken, getSavedLanguage, getSavedParticipantId } from './storage';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -63,6 +63,7 @@ async function requestJson<T>(url: string, init?: RequestInit, slug?: string): P
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      'X-Language': getSavedLanguage(),
       ...authHeaders(slug),
       ...(init?.headers ?? {}),
     },

@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   DEFAULT_POST_EVENT_GRACE_DAYS,
   isValidRetentionPolicy,
@@ -6,8 +9,20 @@ import {
 
 export type DatabaseSslMode = 'auto' | 'true' | 'false';
 
+export const DATABASE_URL_ENV_KEYS = [
+  'DATABASE_URL',
+  'POSTGRES_URI',
+  'POSTGRES_URL',
+  'POSTGRESQL_URL',
+  'POSTGRES_URI_ADMIN',
+] as const;
+
+export type DatabaseUrlEnvKey = (typeof DATABASE_URL_ENV_KEYS)[number];
+
 export interface PersistenceConfig {
   databaseUrl: string;
+  databaseUrlSource?: DatabaseUrlEnvKey | null;
+  unresolvedDatabaseUrlVars?: DatabaseUrlEnvKey[];
   databaseSsl: DatabaseSslMode;
   poolMax: number;
   idleTimeoutMs: number;
@@ -19,6 +34,12 @@ export interface PersistenceConfig {
   purgeCronSecret: string | null;
   allowPublicDemo: boolean;
   isProduction: boolean;
+}
+
+export interface SqlitePathResolution {
+  dbPath: string;
+  usedFallback: boolean;
+  fallbackReason?: string;
 }
 
 function parseIntEnv(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -35,10 +56,42 @@ function parseSslMode(raw: string | undefined): DatabaseSslMode {
   return 'auto';
 }
 
+function isUnresolvedTemplatePlaceholder(value: string): boolean {
+  return /^\$\{.+\}$/.test(value);
+}
+
+function resolveDatabaseUrl(env: Record<string, string | undefined>): {
+  databaseUrl: string;
+  databaseUrlSource: DatabaseUrlEnvKey | null;
+  unresolvedDatabaseUrlVars: DatabaseUrlEnvKey[];
+} {
+  const unresolved: DatabaseUrlEnvKey[] = [];
+
+  for (const key of DATABASE_URL_ENV_KEYS) {
+    const raw = (env[key] ?? '').trim();
+    if (!raw) continue;
+    if (isUnresolvedTemplatePlaceholder(raw)) {
+      unresolved.push(key);
+      continue;
+    }
+    return {
+      databaseUrl: raw,
+      databaseUrlSource: key,
+      unresolvedDatabaseUrlVars: unresolved,
+    };
+  }
+
+  return {
+    databaseUrl: '',
+    databaseUrlSource: null,
+    unresolvedDatabaseUrlVars: unresolved,
+  };
+}
+
 export function loadPersistenceConfig(
   env: Record<string, string | undefined> = process.env
 ): PersistenceConfig {
-  const databaseUrl = (env.DATABASE_URL ?? '').trim();
+  const { databaseUrl, databaseUrlSource, unresolvedDatabaseUrlVars } = resolveDatabaseUrl(env);
   const isProduction = env.NODE_ENV === 'production';
 
   const rawPolicy = (env.DEFAULT_RETENTION_POLICY ?? 'ephemeral_after_event').trim();
@@ -48,6 +101,8 @@ export function loadPersistenceConfig(
 
   return {
     databaseUrl,
+    databaseUrlSource,
+    unresolvedDatabaseUrlVars,
     databaseSsl: parseSslMode(env.DATABASE_SSL),
     poolMax: parseIntEnv(env.DATABASE_POOL_MAX, 5, 1, 50),
     idleTimeoutMs: parseIntEnv(env.DATABASE_IDLE_TIMEOUT_MS, 15_000, 1_000, 300_000),
@@ -67,16 +122,74 @@ export function loadPersistenceConfig(
   };
 }
 
+export function resolveWritableSqlitePath(options: {
+  explicitDbPath?: string;
+  defaultDbPath: string;
+  fallbackDir?: string;
+}): SqlitePathResolution {
+  const explicit = options.explicitDbPath?.trim();
+  if (explicit === ':memory:') {
+    return { dbPath: ':memory:', usedFallback: false };
+  }
+
+  const preferredPath = explicit || options.defaultDbPath;
+  const preferredDir = path.dirname(preferredPath);
+
+  try {
+    if (!fs.existsSync(preferredDir)) {
+      fs.mkdirSync(preferredDir, { recursive: true });
+    }
+    fs.accessSync(preferredDir, fs.constants.W_OK);
+    return { dbPath: preferredPath, usedFallback: false };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (explicit || (code !== 'EACCES' && code !== 'EROFS' && code !== 'EPERM')) {
+      throw err;
+    }
+
+    const fallbackBase = options.fallbackDir ?? path.join(os.tmpdir(), 'shalendar');
+    if (!fs.existsSync(fallbackBase)) {
+      fs.mkdirSync(fallbackBase, { recursive: true });
+    }
+    return {
+      dbPath: path.join(fallbackBase, path.basename(preferredPath)),
+      usedFallback: true,
+      fallbackReason: `${code}: sin permisos de escritura en ${preferredDir}`,
+    };
+  }
+}
+
 export function shouldUseSsl(config: PersistenceConfig): boolean {
   if (config.databaseSsl === 'true') return true;
   if (config.databaseSsl === 'false') return false;
-  if (!config.isProduction) return false;
 
   try {
     const parsed = new URL(config.databaseUrl);
+    const sslMode = parsed.searchParams.get('sslmode')?.trim().toLowerCase();
+    if (sslMode === 'disable') return false;
+    if (
+      sslMode === 'require' ||
+      sslMode === 'verify-ca' ||
+      sslMode === 'verify-full' ||
+      sslMode === 'no-verify'
+    ) {
+      return true;
+    }
+
+    if (!config.isProduction) return false;
+
     const host = parsed.hostname.toLowerCase();
     // Local / docker-compose / internal cluster hostnames without dots typically do not require SSL
-    if (host === 'localhost' || host === '127.0.0.1' || host === 'postgres') {
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host === '[::1]' ||
+      host === 'postgres' ||
+      !host.includes('.') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal')
+    ) {
       return false;
     }
     return true;

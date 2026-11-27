@@ -1,3 +1,5 @@
+import type { Language } from '../../shared/types';
+
 export interface RecentPlanItem {
   slug: string;
   title: string;
@@ -7,6 +9,7 @@ export interface RecentPlanItem {
 
 const RECENT_KEY = 'shalendar:recent-plans';
 const THEME_KEY = 'shalendar:theme';
+const LANGUAGE_KEY = 'shalendar:lang';
 
 export function getSavedParticipantId(slug: string): string | null {
   try {
@@ -145,6 +148,45 @@ export function applyTheme(theme: ThemeMode): void {
   }
   try {
     localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Ignore
+  }
+}
+
+export function getInitialLanguage(): Language {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_KEY);
+    if (saved === 'es' || saved === 'en') return saved;
+  } catch {
+    // Ignore
+  }
+  if (typeof navigator !== 'undefined') {
+    const langs = navigator.languages?.length ? navigator.languages : [navigator.language];
+    for (const raw of langs) {
+      const code = (raw || '').toLowerCase();
+      if (code.startsWith('es')) return 'es';
+      if (code.startsWith('en')) return 'en';
+    }
+  }
+  return 'es';
+}
+
+export function getSavedLanguage(): Language {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_KEY);
+    if (saved === 'es' || saved === 'en') return saved;
+  } catch {
+    // Ignore
+  }
+  return getInitialLanguage();
+}
+
+export function saveLanguage(lang: Language): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = lang;
+  }
+  try {
+    localStorage.setItem(LANGUAGE_KEY, lang);
   } catch {
     // Ignore
   }

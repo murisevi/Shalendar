@@ -28,7 +28,7 @@
                 "ref": "shalendar_postgres",
                 "spec": {
                   "name": "shalendar-postgres",
-                  "type": "postgres",
+                  "type": "postgresql",
                   "version": "16-latest",
                   "billing": {
                     "deploymentPlan": "nf-compute-20"
@@ -46,6 +46,31 @@
               "projectId": "${refs.project.id}"
             },
             "steps": [
+              {
+                "kind": "SecretGroup",
+                "ref": "shalendar_secrets",
+                "spec": {
+                  "name": "shalendar-secrets",
+                  "type": "secret",
+                  "secretType": "environment",
+                  "secrets": {
+                    "variables": {
+                      "DATABASE_URL": "${POSTGRES_URI}"
+                    }
+                  },
+                  "addonDependencies": [
+                    {
+                      "addonId": "${refs.shalendar_postgres.id}",
+                      "keys": [
+                        {
+                          "keyName": "POSTGRES_URI",
+                          "aliases": ["POSTGRES_URI"]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
               {
                 "kind": "Service",
                 "ref": "shalendar_web",
@@ -84,11 +109,6 @@
                         "name": "PORT",
                         "type": "plain",
                         "value": "3001"
-                      },
-                      {
-                        "name": "DATABASE_URL",
-                        "type": "secret",
-                        "value": "${refs.shalendar_postgres.secrets.CONNECTION_STRING}"
                       },
                       {
                         "name": "DATABASE_SSL",

@@ -22,13 +22,14 @@ import type {
   VoteEntry,
 } from '../../shared/types';
 import {
-  TIME_SLOTS,
-  formatDateLongEs,
-  formatDateRangeEs,
-  formatDateShortPartsEs,
+  formatDateLong,
+  formatDateRange,
+  formatDateShortParts,
+  getTimeSlots,
   isVotingEffectivelyOpen,
   type RankingSortMode,
 } from '../../shared/dates';
+import { useI18n, type Translations } from '../lib/i18n';
 import { AvatarStack } from './Avatar';
 
 interface VotingPanelProps {
@@ -58,18 +59,21 @@ interface VotingPanelProps {
   compact?: boolean;
 }
 
-function formatCountdown(deadlineIso: string): { text: string; expired: boolean } {
+function formatCountdown(
+  deadlineIso: string,
+  t: Translations
+): { text: string; expired: boolean } {
   const diff = Date.parse(deadlineIso) - Date.now();
   if (Number.isNaN(diff) || diff <= 0) {
-    return { text: 'Plazo finalizado', expired: true };
+    return { text: t.voting.deadlineExpired, expired: true };
   }
   const mins = Math.floor(diff / 60_000);
   const days = Math.floor(mins / 1440);
   const hours = Math.floor((mins % 1440) / 60);
   const remMins = mins % 60;
-  if (days > 0) return { text: `Cierra en ${days}d ${hours}h`, expired: false };
-  if (hours > 0) return { text: `Cierra en ${hours}h ${remMins}m`, expired: false };
-  return { text: `Cierra en ${Math.max(1, remMins)}m`, expired: false };
+  if (days > 0) return { text: t.voting.closesInDays(days, hours), expired: false };
+  if (hours > 0) return { text: t.voting.closesInHours(hours, remMins), expired: false };
+  return { text: t.voting.closesInMins(Math.max(1, remMins)), expired: false };
 }
 
 export function VotingPanel({
@@ -94,6 +98,7 @@ export function VotingPanel({
   onRequireIdentity,
   compact = false,
 }: VotingPanelProps) {
+  const { language, t } = useI18n();
   const [showNominateForm, setShowNominateForm] = useState(false);
   const [nominateDate, setNominateDate] = useState(selectedDate || '');
   const [nominateLabel, setNominateLabel] = useState('');
@@ -105,12 +110,13 @@ export function VotingPanel({
   // Refresh countdown every 30s if deadline exists
   useEffect(() => {
     if (!plan.votingDeadline) return;
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    const id = setInterval(() => setTick((tk) => tk + 1), 30_000);
     return () => clearInterval(id);
   }, [plan.votingDeadline]);
 
+  const timeSlots = getTimeSlots(language);
   const effectivelyOpen = isVotingEffectivelyOpen(plan);
-  const deadlineInfo = plan.votingDeadline ? formatCountdown(plan.votingDeadline) : null;
+  const deadlineInfo = plan.votingDeadline ? formatCountdown(plan.votingDeadline, t) : null;
 
   const myVotes = me ? votes.filter((v) => v.participantId === me.id) : [];
   const myVotedDateSet = new Set(myVotes.map((v) => v.date));
@@ -139,17 +145,17 @@ export function VotingPanel({
         <div>
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="font-display text-base sm:text-lg font-extrabold tracking-tight">
-              Mejores días y votación
+              {t.voting.title}
             </h3>
             {effectivelyOpen ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/90 dark:bg-amber-950/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
                 <Star className="h-3 w-3 fill-current" />
-                Activa
+                {t.voting.statusOpen}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 rounded-full bg-stone-200 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-stone-600 dark:text-slate-300">
                 <Lock className="h-3 w-3" />
-                Cerrada
+                {t.voting.statusClosed}
               </span>
             )}
             {deadlineInfo && (
@@ -168,9 +174,9 @@ export function VotingPanel({
           <p className="mt-0.5 text-xs text-stone-500 dark:text-slate-400">
             {effectivelyOpen
               ? remainingVotes !== null
-                ? `Vota tus favoritas · Te quedan ${remainingVotes} de ${plan.maxVotesPerUser} votos`
-                : 'Vota todas las fechas que prefieras para desempatar'
-              : 'La votación está cerrada.'}
+                ? t.voting.subtitleRemaining(remainingVotes, plan.maxVotesPerUser)
+                : t.voting.subtitleUnlimited
+              : t.voting.subtitleClosed}
           </p>
         </div>
 
@@ -184,13 +190,13 @@ export function VotingPanel({
             className="inline-flex items-center gap-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 hover:bg-stone-100 dark:hover:bg-slate-700 px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
-            Proponer día
+            {t.voting.proposeDay}
           </button>
           {isAdmin && (
             <button
               type="button"
               onClick={onToggleVotingOpen}
-              title={plan.votingOpen ? 'Cerrar votación' : 'Reabrir votación'}
+              title={plan.votingOpen ? t.voting.closeVotingTitle : t.voting.reopenVotingTitle}
               className="flex h-8 w-8 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 text-stone-500 hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               {plan.votingOpen ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
@@ -205,8 +211,8 @@ export function VotingPanel({
           <div className="flex items-center gap-2">
             <EyeOff className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
             <span>
-              <strong>Voto oculto activo:</strong> solo ves tus votos. Se revelarán al cerrar la
-              votación ({blindVoteStats.votersCount} ya han votado).
+              <strong>{t.voting.blindBannerStrong}</strong>{' '}
+              {t.voting.blindBannerText(blindVoteStats.votersCount)}
             </span>
           </div>
         </div>
@@ -218,10 +224,10 @@ export function VotingPanel({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-xs font-extrabold text-indigo-950 dark:text-indigo-200">
               <CalendarRange className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-              <span>Mejores bloques de {plan.durationDays} días seguidos</span>
+              <span>{t.voting.bestRangesTitle(plan.durationDays)}</span>
             </div>
             <span className="text-[10px] font-semibold text-indigo-700/80 dark:text-indigo-300">
-              Escapada multi-día
+              {t.voting.multiDayTag}
             </span>
           </div>
           <div className="space-y-1.5">
@@ -243,19 +249,20 @@ export function VotingPanel({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-display font-bold text-stone-900 dark:text-white">
-                        {formatDateRangeEs(range.startDate, range.endDate)}
+                        {formatDateRange(range.startDate, range.endDate, language)}
                       </span>
                       {range.includesHoliday && (
                         <span className="rounded-full bg-rose-100 dark:bg-rose-950/70 px-1.5 py-0.2 text-[10px] font-bold text-rose-700 dark:text-rose-300">
-                          Puente/Festivo
+                          {t.voting.holidayBadge}
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
-                      {range.fullYes.length}/{participants.length} pueden todos los días
-                      {range.fullYesOrMaybe.length > range.fullYes.length
-                        ? ` (+${range.fullYesOrMaybe.length - range.fullYes.length} quizá)`
-                        : ''}
+                      {t.voting.rangeAvailSummary(
+                        range.fullYes.length,
+                        participants.length,
+                        Math.max(0, range.fullYesOrMaybe.length - range.fullYes.length)
+                      )}
                     </p>
                   </div>
                   {isAdmin && !isConfirmedRange && (
@@ -270,7 +277,7 @@ export function VotingPanel({
                       }}
                       className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
                     >
-                      Fijar bloque
+                      {t.voting.lockBlockBtn}
                     </button>
                   )}
                 </div>
@@ -283,12 +290,14 @@ export function VotingPanel({
       {/* Ranking Sort Mode Pills */}
       {visibleItems.length > 1 && (
         <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="text-stone-400 dark:text-slate-500 font-semibold">Ordenar:</span>
+          <span className="text-stone-400 dark:text-slate-500 font-semibold">
+            {t.voting.sortLabel}
+          </span>
           {(
             [
-              { id: 'smart', label: '✨ Recomendado' },
-              { id: 'votes', label: '★ Votos' },
-              { id: 'availability', label: '👥 Disponibilidad' },
+              { id: 'smart', label: t.voting.sortSmart },
+              { id: 'votes', label: t.voting.sortVotes },
+              { id: 'availability', label: t.voting.sortAvailability },
             ] as const
           ).map((opt) => (
             <button
@@ -314,7 +323,7 @@ export function VotingPanel({
           className="rounded-2xl border border-teal-200 dark:border-teal-800/60 bg-teal-50/50 dark:bg-teal-950/30 p-3.5 space-y-2.5 animate-pop"
         >
           <p className="text-xs font-bold text-teal-900 dark:text-teal-200">
-            Añadir una fecha candidata a la votación
+            {t.voting.addCandidateTitle}
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
             <input
@@ -329,7 +338,7 @@ export function VotingPanel({
               maxLength={80}
               value={nominateLabel}
               onChange={(e) => setNominateLabel(e.target.value)}
-              placeholder="Nota breve (ej: Plan comida)"
+              placeholder={t.voting.addCandidateNotePlaceholder}
               className="rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-teal-500"
             />
           </div>
@@ -339,13 +348,13 @@ export function VotingPanel({
               onClick={() => setShowNominateForm(false)}
               className="rounded-lg px-2.5 py-1 text-xs font-medium text-stone-500 hover:text-stone-700 cursor-pointer"
             >
-              Cancelar
+              {t.common.cancel}
             </button>
             <button
               type="submit"
               className="rounded-lg bg-teal-600 hover:bg-teal-700 px-3 py-1 text-xs font-semibold text-white transition cursor-pointer"
             >
-              Añadir opción
+              {t.voting.addOptionBtn}
             </button>
           </div>
         </form>
@@ -356,17 +365,16 @@ export function VotingPanel({
         <div className="rounded-2xl border border-dashed border-stone-200 dark:border-slate-800 py-8 px-4 text-center space-y-2">
           <Sparkles className="mx-auto h-7 w-7 text-teal-500/70" />
           <p className="font-display text-sm font-bold text-stone-700 dark:text-slate-200">
-            Aún no hay días marcados
+            {t.voting.emptyTitle}
           </p>
           <p className="text-xs text-stone-500 dark:text-slate-400 max-w-xs mx-auto">
-            Pinta tus días disponibles en el calendario y aquí aparecerán automáticamente las mejores
-            fechas listas para votar.
+            {t.voting.emptyDesc}
           </p>
         </div>
       ) : (
         <div className="space-y-2.5">
           {visibleItems.map((item, index) => {
-            const parts = formatDateShortPartsEs(item.date);
+            const parts = formatDateShortParts(item.date, language);
             const hasVoted = myVotedDateSet.has(item.date);
             const isLeader = !blindVoteStats?.hidden && maxVoteCount > 0 && item.votes.length === maxVoteCount;
             const isConfirmed = plan.confirmedDate === item.date && !plan.confirmedEndDate;
@@ -376,7 +384,7 @@ export function VotingPanel({
             const votePct =
               maxVoteCount > 0 ? Math.round((item.votes.length / totalParticipants) * 100) : 0;
             const bestSlotObj = item.bestSlot
-              ? TIME_SLOTS.find((s) => s.id === item.bestSlot)
+              ? timeSlots.find((s) => s.id === item.bestSlot)
               : null;
 
             return (
@@ -413,23 +421,23 @@ export function VotingPanel({
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-display text-sm font-bold text-stone-900 dark:text-white truncate">
-                        {formatDateLongEs(item.date)}
+                        {formatDateLong(item.date, language)}
                       </span>
                       {isConfirmed && (
                         <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-extrabold text-amber-950">
                           <Crown className="h-2.5 w-2.5" />
-                          Elegida
+                          {t.voting.badgeChosen}
                         </span>
                       )}
                       {!isConfirmed && isLeader && index === 0 && (
                         <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 dark:bg-amber-900/70 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-200">
                           <Crown className="h-2.5 w-2.5" />
-                          Líder
+                          {t.voting.badgeLeader}
                         </span>
                       )}
                       {isAllAvailable && (
                         <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                          Todos pueden
+                          {t.voting.badgeAllFree}
                         </span>
                       )}
                       {bestSlotObj && (
@@ -449,12 +457,11 @@ export function VotingPanel({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="font-medium text-emerald-700 dark:text-emerald-300">
-                          {item.yes.length}/{participants.length} pueden
-                          {item.maybe.length > 0 ? ` · ${item.maybe.length} quizá` : ''}
+                          {t.voting.availRatio(item.yes.length, participants.length, item.maybe.length)}
                         </span>
                         {!blindVoteStats?.hidden && (
                           <span className="font-semibold text-amber-700 dark:text-amber-300 tabular-nums">
-                            {item.votes.length} {item.votes.length === 1 ? 'voto' : 'votos'}
+                            {t.common.votes(item.votes.length)}
                           </span>
                         )}
                       </div>
@@ -508,7 +515,7 @@ export function VotingPanel({
                       }`}
                     >
                       <Star className={`h-3.5 w-3.5 ${hasVoted ? 'fill-current' : ''}`} />
-                      <span>{hasVoted ? 'Votado' : 'Votar'}</span>
+                      <span>{hasVoted ? t.voting.voted : t.voting.vote}</span>
                     </button>
 
                     <div className="flex items-center gap-1.5">
@@ -521,13 +528,13 @@ export function VotingPanel({
                           }}
                           className="text-[11px] font-semibold text-stone-400 hover:text-teal-600 dark:hover:text-teal-300 transition cursor-pointer"
                         >
-                          Confirmar
+                          {t.voting.confirm}
                         </button>
                       )}
                       {isAdmin && item.pollOption && (
                         <button
                           type="button"
-                          title="Quitar fecha candidata"
+                          title={t.voting.removeCandidateTitle}
                           onClick={(e) => {
                             e.stopPropagation();
                             onRemovePollOption(item.date);
@@ -560,11 +567,11 @@ export function VotingPanel({
                         onChange={(e) => setConfirmDuration(Number(e.target.value))}
                         className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900 px-2 py-1 text-xs font-medium"
                       >
-                        <option value={60}>1 hora</option>
-                        <option value={120}>2 horas</option>
-                        <option value={180}>3 horas</option>
-                        <option value={240}>4 horas</option>
-                        <option value={360}>6 horas</option>
+                        <option value={60}>{t.common.hours(1)}</option>
+                        <option value={120}>{t.common.hours(2)}</option>
+                        <option value={180}>{t.common.hours(3)}</option>
+                        <option value={240}>{t.common.hours(4)}</option>
+                        <option value={360}>{t.common.hours(6)}</option>
                       </select>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -573,7 +580,7 @@ export function VotingPanel({
                         onClick={() => setConfirmingDate(null)}
                         className="rounded-lg px-2 py-1 text-xs text-stone-500 hover:text-stone-700 cursor-pointer"
                       >
-                        Cancelar
+                        {t.common.cancel}
                       </button>
                       <button
                         type="button"
@@ -588,7 +595,7 @@ export function VotingPanel({
                         className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-xs font-bold text-white transition cursor-pointer"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" />
-                        Fijar fecha
+                        {t.voting.confirmDateBtn}
                       </button>
                     </div>
                   </div>

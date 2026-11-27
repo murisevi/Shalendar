@@ -35,22 +35,58 @@ export interface PgPoolConstructorOptions {
 }
 
 /**
+ * Strips `sslmode` from connectionString when `pg-connection-string` would otherwise
+ * clobber our explicit `ssl` option (e.g., turning `sslmode=require` into strict CA check
+ * that fails on PaaS self-signed Postgres certs, or overriding `DATABASE_SSL=false`).
+ * Preserves explicit `verify-ca` / `verify-full` / `sslrootcert` when `DATABASE_SSL=auto`.
+ */
+function normalizeConnectionStringForPg(config: PersistenceConfig): {
+  connectionString: string;
+  preserveStrictUrlSsl: boolean;
+} {
+  try {
+    const parsed = new URL(config.databaseUrl);
+    const sslMode = parsed.searchParams.get('sslmode')?.trim().toLowerCase();
+    const hasRootCert = parsed.searchParams.has('sslrootcert');
+
+    if (
+      config.databaseSsl === 'auto' &&
+      (hasRootCert || sslMode === 'verify-ca' || sslMode === 'verify-full')
+    ) {
+      return { connectionString: config.databaseUrl, preserveStrictUrlSsl: true };
+    }
+
+    if (parsed.searchParams.has('sslmode')) {
+      parsed.searchParams.delete('sslmode');
+      return { connectionString: parsed.toString(), preserveStrictUrlSsl: false };
+    }
+  } catch {
+    // Keep original connectionString if URL parsing fails
+  }
+  return { connectionString: config.databaseUrl, preserveStrictUrlSsl: false };
+}
+
+/**
  * Builds options ready to pass into `new pg.Pool(buildPgPoolOptions(config))`.
  * Tuned for PaaS deployments (Northflank Sandbox & serverless Neon scale-to-zero).
  */
 export function buildPgPoolOptions(config: PersistenceConfig): PgPoolConstructorOptions {
   if (!config.databaseUrl) {
     throw new Error(
-      'DATABASE_URL no está configurada. Define DATABASE_URL apuntando a tu instancia de PostgreSQL.'
+      'DATABASE_URL no está configurada. Define DATABASE_URL (o POSTGRES_URI) apuntando a tu instancia de PostgreSQL.'
     );
   }
 
+  const { connectionString, preserveStrictUrlSsl } = normalizeConnectionStringForPg(config);
+
   return {
-    connectionString: config.databaseUrl,
+    connectionString,
     max: config.poolMax,
     idleTimeoutMillis: config.idleTimeoutMs,
     connectionTimeoutMillis: config.connectionTimeoutMs,
-    ssl: shouldUseSsl(config) ? { rejectUnauthorized: false } : false,
+    ...(preserveStrictUrlSsl
+      ? {}
+      : { ssl: shouldUseSsl(config) ? { rejectUnauthorized: false } : false }),
   };
 }
 

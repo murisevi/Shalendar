@@ -20,6 +20,7 @@ import type {
   SubPoll,
   SubPollCategory,
 } from '../../shared/types';
+import { useI18n } from '../lib/i18n';
 import { Avatar, AvatarStack } from './Avatar';
 
 interface PlanLogisticsPanelProps {
@@ -60,12 +61,6 @@ interface PlanLogisticsPanelProps {
   onRequireIdentity: () => void;
 }
 
-const CATEGORY_META: Record<SubPollCategory, { label: string; emoji: string }> = {
-  place: { label: '¿Dónde?', emoji: '📍' },
-  activity: { label: '¿Qué hacemos?', emoji: '🎯' },
-  other: { label: 'Otra decisión', emoji: '💡' },
-};
-
 export function PlanLogisticsPanel({
   participants,
   me,
@@ -86,6 +81,8 @@ export function PlanLogisticsPanel({
   onDeleteCarpool,
   onRequireIdentity,
 }: PlanLogisticsPanelProps) {
+  const { t } = useI18n();
+
   // Sub-poll creation state
   const [showNewPoll, setShowNewPoll] = useState(false);
   const [pollCategory, setPollCategory] = useState<SubPollCategory>('place');
@@ -110,6 +107,7 @@ export function PlanLogisticsPanel({
   const [carNotes, setCarNotes] = useState('');
 
   const participantById = new Map(participants.map((p) => [p.id, p]));
+  const categoryMeta = t.logistics.categories;
 
   async function handleCreatePoll(e: React.FormEvent) {
     e.preventDefault();
@@ -178,10 +176,10 @@ export function PlanLogisticsPanel({
           <div>
             <h3 className="font-display text-base sm:text-lg font-extrabold tracking-tight flex items-center gap-2">
               <MapPin className="h-4.5 w-4.5 text-teal-600 dark:text-teal-400" />
-              Encuestas: ¿Dónde? y ¿Qué hacemos?
+              {t.logistics.pollsTitle}
             </h3>
             <p className="text-xs text-stone-500 dark:text-slate-400">
-              Decidid restaurante, casa rural, actividad o película dentro del mismo enlace.
+              {t.logistics.pollsSubtitle}
             </p>
           </div>
           <button
@@ -190,7 +188,7 @@ export function PlanLogisticsPanel({
             className="inline-flex items-center gap-1 rounded-xl bg-teal-600 hover:bg-teal-700 px-3 py-1.5 text-xs font-bold text-white transition cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
-            Nueva encuesta
+            {t.logistics.newPollBtn}
           </button>
         </div>
 
@@ -211,7 +209,7 @@ export function PlanLogisticsPanel({
                       : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
                   }`}
                 >
-                  {CATEGORY_META[cat].emoji} {CATEGORY_META[cat].label}
+                  {categoryMeta[cat].emoji} {categoryMeta[cat].label}
                 </button>
               ))}
             </div>
@@ -222,14 +220,14 @@ export function PlanLogisticsPanel({
               maxLength={120}
               value={pollQuestion}
               onChange={(e) => setPollQuestion(e.target.value)}
-              placeholder="Ej: ¿Dónde reservamos para cenar?"
+              placeholder={t.logistics.pollQuestionPlaceholder}
               className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none focus:border-teal-500"
             />
             <textarea
               rows={3}
               value={pollOptionsRaw}
               onChange={(e) => setPollOptionsRaw(e.target.value)}
-              placeholder="Opciones iniciales (una por línea, opcional):&#10;Pizzería Napoli&#10;La Taberna del Parque&#10;Ramen Centro"
+              placeholder={t.logistics.pollOptionsPlaceholder}
               className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none focus:border-teal-500 resize-none"
             />
             <div className="flex justify-end gap-2">
@@ -238,13 +236,13 @@ export function PlanLogisticsPanel({
                 onClick={() => setShowNewPoll(false)}
                 className="rounded-lg px-2.5 py-1 text-xs font-medium text-stone-500 cursor-pointer"
               >
-                Cancelar
+                {t.common.cancel}
               </button>
               <button
                 type="submit"
                 className="rounded-lg bg-teal-600 hover:bg-teal-700 px-3 py-1.5 text-xs font-bold text-white cursor-pointer"
               >
-                Crear encuesta
+                {t.logistics.createPollBtn}
               </button>
             </div>
           </form>
@@ -252,7 +250,7 @@ export function PlanLogisticsPanel({
 
         {subPolls.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-stone-200 dark:border-slate-800 py-6 text-center text-xs text-stone-500 dark:text-slate-400">
-            Aún no hay encuestas abiertas. Crea una para votar restaurante, destino o plan.
+            {t.logistics.pollsEmpty}
           </p>
         ) : (
           <div className="space-y-4">
@@ -266,7 +264,7 @@ export function PlanLogisticsPanel({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">{CATEGORY_META[poll.category].emoji}</span>
+                      <span className="text-lg">{categoryMeta[poll.category].emoji}</span>
                       <h4 className="font-display text-sm font-extrabold">{poll.question}</h4>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -278,13 +276,13 @@ export function PlanLogisticsPanel({
                         className="inline-flex items-center gap-1 rounded-lg border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-semibold hover:border-teal-400 cursor-pointer"
                       >
                         <Plus className="h-3 w-3" />
-                        Añadir opción
+                        {t.logistics.addOptionBtn}
                       </button>
                       {isAdmin && (
                         <button
                           type="button"
                           onClick={() => onDeleteSubPoll(poll.id)}
-                          title="Eliminar encuesta"
+                          title={t.logistics.deletePollTitle}
                           className="p-1 text-stone-400 hover:text-rose-500 cursor-pointer"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -304,7 +302,7 @@ export function PlanLogisticsPanel({
                         maxLength={100}
                         value={optTitle}
                         onChange={(e) => setOptTitle(e.target.value)}
-                        placeholder="Nombre (ej: Casa Rural El Pino)"
+                        placeholder={t.logistics.optTitlePlaceholder}
                         className="sm:col-span-3 rounded-lg border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs outline-none focus:border-teal-500"
                       />
                       <input
@@ -312,7 +310,7 @@ export function PlanLogisticsPanel({
                         maxLength={240}
                         value={optUrl}
                         onChange={(e) => setOptUrl(e.target.value)}
-                        placeholder="Enlace Maps / web (opcional)"
+                        placeholder={t.logistics.optUrlPlaceholder}
                         className="sm:col-span-2 rounded-lg border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs outline-none focus:border-teal-500"
                       />
                       <input
@@ -320,7 +318,7 @@ export function PlanLogisticsPanel({
                         maxLength={24}
                         value={optCost}
                         onChange={(e) => setOptCost(e.target.value)}
-                        placeholder="Coste (ej: ~25€)"
+                        placeholder={t.logistics.optCostPlaceholder}
                         className="rounded-lg border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs outline-none focus:border-teal-500"
                       />
                       <div className="sm:col-span-3 flex justify-end gap-2">
@@ -329,13 +327,13 @@ export function PlanLogisticsPanel({
                           onClick={() => setAddingOptPollId(null)}
                           className="text-xs text-stone-500 px-2 py-1 cursor-pointer"
                         >
-                          Cancelar
+                          {t.common.cancel}
                         </button>
                         <button
                           type="submit"
                           className="rounded-lg bg-teal-600 px-3 py-1 text-xs font-bold text-white cursor-pointer"
                         >
-                          Añadir
+                          {t.logistics.addBtn}
                         </button>
                       </div>
                     </form>
@@ -368,7 +366,7 @@ export function PlanLogisticsPanel({
                                 {isWinner && (
                                   <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-950">
                                     <Crown className="h-2.5 w-2.5" />
-                                    Elegida
+                                    {t.logistics.chosenBadge}
                                   </span>
                                 )}
                                 {opt.estimatedCost && (
@@ -383,7 +381,7 @@ export function PlanLogisticsPanel({
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline"
                                   >
-                                    Ver enlace
+                                    {t.logistics.viewLink}
                                     <ExternalLink className="h-3 w-3" />
                                   </a>
                                 )}
@@ -421,7 +419,7 @@ export function PlanLogisticsPanel({
                               {isAdmin && (
                                 <button
                                   type="button"
-                                  title={isWinner ? 'Quitar ganadora' : 'Marcar como ganadora'}
+                                  title={isWinner ? t.logistics.removeWinnerTitle : t.logistics.markWinnerTitle}
                                   onClick={() => onSetSubPollWinner(poll.id, isWinner ? null : opt.id)}
                                   className={`p-1.5 rounded-lg transition cursor-pointer ${
                                     isWinner
@@ -445,21 +443,24 @@ export function PlanLogisticsPanel({
         )}
       </section>
 
-      {/* 2. COLLABORATIVE CHECKLIST ("¿QUIÉN LLEVA QUÉ?") */}
+      {/* 2. COLLABORATIVE CHECKLIST */}
       <section className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="font-display text-base sm:text-lg font-extrabold tracking-tight flex items-center gap-2">
               <ListChecks className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
-              Checklist: ¿Quién lleva qué?
+              {t.logistics.checklistTitle}
             </h3>
             <p className="text-xs text-stone-500 dark:text-slate-400">
-              Repartid compras, reservas o cosas que traer con un clic.
+              {t.logistics.checklistSubtitle}
             </p>
           </div>
           {checklist.length > 0 && (
             <span className="rounded-full bg-stone-100 dark:bg-slate-800 px-2.5 py-1 text-xs font-bold tabular-nums text-stone-600 dark:text-slate-300">
-              {checklist.filter((i) => i.completed).length}/{checklist.length} listo
+              {t.logistics.checklistProgress(
+                checklist.filter((i) => i.completed).length,
+                checklist.length
+              )}
             </span>
           )}
         </div>
@@ -470,7 +471,7 @@ export function PlanLogisticsPanel({
             maxLength={120}
             value={taskTitle}
             onChange={(e) => setTaskTitle(e.target.value)}
-            placeholder="Añadir tarea o cosa que llevar (ej: Hielo, Reservar mesa...)"
+            placeholder={t.logistics.taskPlaceholder}
             className="flex-1 min-w-[200px] rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-2 text-xs outline-none focus:border-teal-500"
           />
           <label className="inline-flex items-center gap-1.5 text-xs text-stone-600 dark:text-slate-300 cursor-pointer">
@@ -480,7 +481,7 @@ export function PlanLogisticsPanel({
               onChange={(e) => setAssignTaskToMe(e.target.checked)}
               className="rounded accent-teal-600"
             />
-            Lo llevo yo
+            {t.logistics.assignToMe}
           </label>
           <button
             type="submit"
@@ -488,13 +489,13 @@ export function PlanLogisticsPanel({
             className="inline-flex items-center gap-1 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 px-3 py-2 text-xs font-bold text-white cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
-            Añadir
+            {t.logistics.addBtn}
           </button>
         </form>
 
         {checklist.length === 0 ? (
           <p className="text-center text-xs text-stone-400 dark:text-slate-500 py-4">
-            Sin tareas pendientes todavía.
+            {t.logistics.checklistEmpty}
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -538,7 +539,7 @@ export function PlanLogisticsPanel({
                             assignedTo: isMine ? null : me.id,
                           });
                         }}
-                        title={isMine ? 'Soltar tarea' : 'Reasignarme esta tarea'}
+                        title={isMine ? t.logistics.unassignTaskTitle : t.logistics.reassignTaskTitle}
                         className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 dark:border-teal-800 bg-teal-50/80 dark:bg-teal-950/50 pl-1 pr-2.5 py-0.5 text-[11px] font-semibold text-teal-900 dark:text-teal-200 cursor-pointer"
                       >
                         <Avatar participant={assignee} size="xs" />
@@ -557,14 +558,14 @@ export function PlanLogisticsPanel({
                         className="inline-flex items-center gap-1 rounded-full border border-dashed border-stone-300 dark:border-slate-700 hover:border-teal-500 hover:text-teal-700 dark:hover:text-teal-300 px-2.5 py-0.5 text-[11px] font-semibold text-stone-500 cursor-pointer"
                       >
                         <UserCheck className="h-3 w-3" />
-                        Me encargo
+                        {t.logistics.claimTaskBtn}
                       </button>
                     )}
 
                     <button
                       type="button"
                       onClick={() => onDeleteChecklistItem(item.id)}
-                      title="Eliminar"
+                      title={t.common.delete}
                       className="p-1 text-stone-300 hover:text-rose-500 cursor-pointer"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -577,16 +578,16 @@ export function PlanLogisticsPanel({
         )}
       </section>
 
-      {/* 3. CARPOOLING ("REPARTO DE COCHES") */}
+      {/* 3. CARPOOLING */}
       <section className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-display text-base sm:text-lg font-extrabold tracking-tight flex items-center gap-2">
               <Car className="h-4.5 w-4.5 text-sky-600 dark:text-sky-400" />
-              Reparto de coches (Carpooling)
+              {t.logistics.carpoolTitle}
             </h3>
             <p className="text-xs text-stone-500 dark:text-slate-400">
-              Ofrece plazas libres en tu coche o reserva sitio en el de un amigo.
+              {t.logistics.carpoolSubtitle}
             </p>
           </div>
           <button
@@ -595,7 +596,7 @@ export function PlanLogisticsPanel({
             className="inline-flex items-center gap-1 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-950 px-3 py-1.5 text-xs font-bold text-sky-800 dark:text-sky-200 transition cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
-            Ofrecer coche
+            {t.logistics.offerCarBtn}
           </button>
         </div>
 
@@ -610,12 +611,12 @@ export function PlanLogisticsPanel({
               maxLength={100}
               value={carOrigin}
               onChange={(e) => setCarOrigin(e.target.value)}
-              placeholder="¿Desde dónde sales? (ej: Metro Moncloa)"
+              placeholder={t.logistics.carOriginPlaceholder}
               className="sm:col-span-2 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none focus:border-sky-500"
             />
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-stone-600 dark:text-slate-300 shrink-0">
-                Plazas:
+                {t.logistics.seatsLabel}
               </label>
               <input
                 type="number"
@@ -631,7 +632,7 @@ export function PlanLogisticsPanel({
               maxLength={24}
               value={carTime}
               onChange={(e) => setCarTime(e.target.value)}
-              placeholder="Hora salida (ej: 19:45)"
+              placeholder={t.logistics.carTimePlaceholder}
               className="rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none"
             />
             <input
@@ -639,7 +640,7 @@ export function PlanLogisticsPanel({
               maxLength={160}
               value={carNotes}
               onChange={(e) => setCarNotes(e.target.value)}
-              placeholder="Notas (ej: maletero grande, paso por el centro)"
+              placeholder={t.logistics.carNotesPlaceholder}
               className="sm:col-span-2 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs outline-none"
             />
             <div className="sm:col-span-3 flex justify-end gap-2">
@@ -648,13 +649,13 @@ export function PlanLogisticsPanel({
                 onClick={() => setShowNewCar(false)}
                 className="text-xs text-stone-500 px-2 py-1 cursor-pointer"
               >
-                Cancelar
+                {t.common.cancel}
               </button>
               <button
                 type="submit"
                 className="rounded-xl bg-sky-600 hover:bg-sky-700 px-3.5 py-1.5 text-xs font-bold text-white cursor-pointer"
               >
-                Publicar coche
+                {t.logistics.publishCarBtn}
               </button>
             </div>
           </form>
@@ -662,7 +663,7 @@ export function PlanLogisticsPanel({
 
         {carpools.length === 0 ? (
           <p className="text-center text-xs text-stone-400 dark:text-slate-500 py-4">
-            Aún nadie ha ofrecido coche para esta quedada.
+            {t.logistics.carpoolEmpty}
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -686,7 +687,7 @@ export function PlanLogisticsPanel({
                         {driver && <Avatar participant={driver} size="sm" />}
                         <div className="min-w-0">
                           <p className="text-xs font-extrabold text-stone-900 dark:text-white truncate">
-                            Coche de {driver?.name ?? 'Amigo'}
+                            {t.logistics.carOf(driver?.name ?? t.common.friendFallback)}
                           </p>
                           <p className="text-[11px] text-stone-500 dark:text-slate-400 truncate">
                             {ride.origin}
@@ -701,7 +702,7 @@ export function PlanLogisticsPanel({
                             : 'bg-stone-200 dark:bg-slate-700 text-stone-600 dark:text-slate-300'
                         }`}
                       >
-                        {seatsLeft > 0 ? `${seatsLeft} libres` : 'Completo'}
+                        {seatsLeft > 0 ? t.logistics.seatsLeft(seatsLeft) : t.logistics.carFull}
                       </span>
                     </div>
 
@@ -745,15 +746,15 @@ export function PlanLogisticsPanel({
                         {isPassenger ? (
                           <>
                             <Check className="h-3.5 w-3.5" />
-                            Tienes plaza (soltar)
+                            {t.logistics.releaseSeatBtn}
                           </>
                         ) : (
-                          'Reservar plaza'
+                          t.logistics.reserveSeatBtn
                         )}
                       </button>
                     ) : (
                       <span className="text-[11px] font-semibold text-sky-700 dark:text-sky-300">
-                        Eres el conductor
+                        {t.logistics.youAreDriver}
                       </span>
                     )}
 
@@ -761,7 +762,7 @@ export function PlanLogisticsPanel({
                       <button
                         type="button"
                         onClick={() => onDeleteCarpool(ride.id)}
-                        title="Eliminar coche"
+                        title={t.logistics.deleteCarTitle}
                         className="p-1.5 text-stone-400 hover:text-rose-500 cursor-pointer"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

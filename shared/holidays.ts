@@ -1,4 +1,4 @@
-import type { HolidayCountry } from './types.js';
+import type { HolidayCountry, Language } from './types.js';
 
 export interface HolidayInfo {
   date: string; // YYYY-MM-DD
@@ -54,15 +54,19 @@ function lastWeekdayOfMonth(year: number, month1: number, weekday: number): stri
 
 const cache = new Map<string, Map<string, HolidayInfo>>();
 
-export function getHolidaysForYear(year: number, country: HolidayCountry): Map<string, HolidayInfo> {
+export function getHolidaysForYear(
+  year: number,
+  country: HolidayCountry,
+  lang: Language = 'es'
+): Map<string, HolidayInfo> {
   if (country === 'none') return new Map();
-  const key = `${country}:${year}`;
+  const key = `${country}:${year}:${lang}`;
   const cached = cache.get(key);
   if (cached) return cached;
 
   const map = new Map<string, HolidayInfo>();
-  const add = (date: string, name: string) => {
-    if (!map.has(date)) map.set(date, { date, name });
+  const add = (date: string, es: string, en: string) => {
+    if (!map.has(date)) map.set(date, { date, name: lang === 'en' ? en : es });
   };
 
   const easter = getEasterSunday(year);
@@ -70,66 +74,70 @@ export function getHolidaysForYear(year: number, country: HolidayCountry): Map<s
   const maundyThursday = addDays(year, easter.month, easter.day, -3);
 
   if (country === 'ES') {
-    add(toISO(year, 1, 1), 'Año Nuevo');
-    add(toISO(year, 1, 6), 'Día de Reyes');
-    add(maundyThursday, 'Jueves Santo');
-    add(goodFriday, 'Viernes Santo');
-    add(toISO(year, 5, 1), 'Día del Trabajo');
-    add(toISO(year, 8, 15), 'Asunción de la Virgen');
-    add(toISO(year, 10, 12), 'Fiesta Nacional de España');
-    add(toISO(year, 11, 1), 'Todos los Santos');
-    add(toISO(year, 12, 6), 'Día de la Constitución');
-    add(toISO(year, 12, 8), 'Inmaculada Concepción');
-    add(toISO(year, 12, 25), 'Navidad');
+    add(toISO(year, 1, 1), 'Año Nuevo', "New Year's Day");
+    add(toISO(year, 1, 6), 'Día de Reyes', 'Epiphany');
+    add(maundyThursday, 'Jueves Santo', 'Maundy Thursday');
+    add(goodFriday, 'Viernes Santo', 'Good Friday');
+    add(toISO(year, 5, 1), 'Día del Trabajo', 'Labor Day');
+    add(toISO(year, 8, 15), 'Asunción de la Virgen', 'Assumption Day');
+    add(toISO(year, 10, 12), 'Fiesta Nacional de España', 'National Day of Spain');
+    add(toISO(year, 11, 1), 'Todos los Santos', "All Saints' Day");
+    add(toISO(year, 12, 6), 'Día de la Constitución', 'Constitution Day');
+    add(toISO(year, 12, 8), 'Inmaculada Concepción', 'Immaculate Conception');
+    add(toISO(year, 12, 25), 'Navidad', 'Christmas Day');
   } else if (country === 'MX') {
-    add(toISO(year, 1, 1), 'Año Nuevo');
-    add(nthWeekdayOfMonth(year, 2, 1, 1), 'Día de la Constitución');
-    add(nthWeekdayOfMonth(year, 3, 1, 3), 'Natalicio de Benito Juárez');
-    add(goodFriday, 'Viernes Santo');
-    add(toISO(year, 5, 1), 'Día del Trabajo');
-    add(toISO(year, 9, 16), 'Día de la Independencia');
-    add(nthWeekdayOfMonth(year, 11, 1, 3), 'Revolución Mexicana');
-    add(toISO(year, 12, 25), 'Navidad');
+    add(toISO(year, 1, 1), 'Año Nuevo', "New Year's Day");
+    add(nthWeekdayOfMonth(year, 2, 1, 1), 'Día de la Constitución', 'Constitution Day');
+    add(nthWeekdayOfMonth(year, 3, 1, 3), 'Natalicio de Benito Juárez', "Benito Juárez's Birthday");
+    add(goodFriday, 'Viernes Santo', 'Good Friday');
+    add(toISO(year, 5, 1), 'Día del Trabajo', 'Labor Day');
+    add(toISO(year, 9, 16), 'Día de la Independencia', 'Independence Day');
+    add(nthWeekdayOfMonth(year, 11, 1, 3), 'Revolución Mexicana', 'Revolution Day');
+    add(toISO(year, 12, 25), 'Navidad', 'Christmas Day');
   } else if (country === 'AR') {
-    add(toISO(year, 1, 1), 'Año Nuevo');
-    add(toISO(year, 3, 24), 'Día de la Memoria');
-    add(toISO(year, 4, 2), 'Día del Veterano y Malvinas');
-    add(goodFriday, 'Viernes Santo');
-    add(toISO(year, 5, 1), 'Día del Trabajador');
-    add(toISO(year, 5, 25), 'Revolución de Mayo');
-    add(toISO(year, 6, 20), 'Día de la Bandera');
-    add(toISO(year, 7, 9), 'Día de la Independencia');
-    add(toISO(year, 12, 8), 'Inmaculada Concepción');
-    add(toISO(year, 12, 25), 'Navidad');
+    add(toISO(year, 1, 1), 'Año Nuevo', "New Year's Day");
+    add(toISO(year, 3, 24), 'Día de la Memoria', 'Day of Remembrance');
+    add(toISO(year, 4, 2), 'Día del Veterano y Malvinas', 'Malvinas Day');
+    add(goodFriday, 'Viernes Santo', 'Good Friday');
+    add(toISO(year, 5, 1), 'Día del Trabajador', 'Labor Day');
+    add(toISO(year, 5, 25), 'Revolución de Mayo', 'May Revolution Day');
+    add(toISO(year, 6, 20), 'Día de la Bandera', 'Flag Day');
+    add(toISO(year, 7, 9), 'Día de la Independencia', 'Independence Day');
+    add(toISO(year, 12, 8), 'Inmaculada Concepción', 'Immaculate Conception');
+    add(toISO(year, 12, 25), 'Navidad', 'Christmas Day');
   } else if (country === 'CO') {
-    add(toISO(year, 1, 1), 'Año Nuevo');
-    add(maundyThursday, 'Jueves Santo');
-    add(goodFriday, 'Viernes Santo');
-    add(toISO(year, 5, 1), 'Día del Trabajo');
-    add(toISO(year, 7, 20), 'Día de la Independencia');
-    add(toISO(year, 8, 7), 'Batalla de Boyacá');
-    add(toISO(year, 12, 8), 'Inmaculada Concepción');
-    add(toISO(year, 12, 25), 'Navidad');
+    add(toISO(year, 1, 1), 'Año Nuevo', "New Year's Day");
+    add(maundyThursday, 'Jueves Santo', 'Maundy Thursday');
+    add(goodFriday, 'Viernes Santo', 'Good Friday');
+    add(toISO(year, 5, 1), 'Día del Trabajo', 'Labor Day');
+    add(toISO(year, 7, 20), 'Día de la Independencia', 'Independence Day');
+    add(toISO(year, 8, 7), 'Batalla de Boyacá', 'Battle of Boyacá');
+    add(toISO(year, 12, 8), 'Inmaculada Concepción', 'Immaculate Conception');
+    add(toISO(year, 12, 25), 'Navidad', 'Christmas Day');
   } else if (country === 'US') {
-    add(toISO(year, 1, 1), "New Year's Day");
-    add(nthWeekdayOfMonth(year, 1, 1, 3), 'Martin Luther King Jr. Day');
-    add(nthWeekdayOfMonth(year, 2, 1, 3), "Presidents' Day");
-    add(lastWeekdayOfMonth(year, 5, 1), 'Memorial Day');
-    add(toISO(year, 6, 19), 'Juneteenth');
-    add(toISO(year, 7, 4), 'Independence Day');
-    add(nthWeekdayOfMonth(year, 9, 1, 1), 'Labor Day');
-    add(nthWeekdayOfMonth(year, 11, 4, 4), 'Thanksgiving');
-    add(toISO(year, 12, 25), 'Christmas Day');
+    add(toISO(year, 1, 1), 'Año Nuevo', "New Year's Day");
+    add(nthWeekdayOfMonth(year, 1, 1, 3), 'Día de Martin Luther King Jr.', 'Martin Luther King Jr. Day');
+    add(nthWeekdayOfMonth(year, 2, 1, 3), 'Día de los Presidentes', "Presidents' Day");
+    add(lastWeekdayOfMonth(year, 5, 1), 'Día de los Caídos', 'Memorial Day');
+    add(toISO(year, 6, 19), 'Juneteenth', 'Juneteenth');
+    add(toISO(year, 7, 4), 'Día de la Independencia', 'Independence Day');
+    add(nthWeekdayOfMonth(year, 9, 1, 1), 'Día del Trabajo', 'Labor Day');
+    add(nthWeekdayOfMonth(year, 11, 4, 4), 'Acción de Gracias', 'Thanksgiving');
+    add(toISO(year, 12, 25), 'Navidad', 'Christmas Day');
   }
 
   cache.set(key, map);
   return map;
 }
 
-export function getHolidayInfo(isoDate: string, country: HolidayCountry): HolidayInfo | null {
+export function getHolidayInfo(
+  isoDate: string,
+  country: HolidayCountry,
+  lang: Language = 'es'
+): HolidayInfo | null {
   if (country === 'none' || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
   const year = Number(isoDate.slice(0, 4));
-  return getHolidaysForYear(year, country).get(isoDate) ?? null;
+  return getHolidaysForYear(year, country, lang).get(isoDate) ?? null;
 }
 
 export const HOLIDAY_COUNTRIES: Array<{ id: HolidayCountry; label: string }> = [
@@ -140,3 +148,16 @@ export const HOLIDAY_COUNTRIES: Array<{ id: HolidayCountry; label: string }> = [
   { id: 'US', label: '🇺🇸 EE. UU.' },
   { id: 'none', label: 'Sin festivos' },
 ];
+
+export const HOLIDAY_COUNTRIES_EN: Array<{ id: HolidayCountry; label: string }> = [
+  { id: 'ES', label: '🇪🇸 Spain' },
+  { id: 'MX', label: '🇲🇽 Mexico' },
+  { id: 'AR', label: '🇦🇷 Argentina' },
+  { id: 'CO', label: '🇨🇴 Colombia' },
+  { id: 'US', label: '🇺🇸 United States' },
+  { id: 'none', label: 'No holidays' },
+];
+
+export function getHolidayCountries(lang: Language = 'es'): Array<{ id: HolidayCountry; label: string }> {
+  return lang === 'en' ? HOLIDAY_COUNTRIES_EN : HOLIDAY_COUNTRIES;
+}

@@ -30,6 +30,9 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server/persistence/migrations ./server/persistence/migrations
 
+# Pre-create writable data directory for non-root user (SQLite fallback or mounted volume)
+RUN mkdir -p /app/data && chown -R node:node /app/data
+
 USER node
 EXPOSE 3001
 

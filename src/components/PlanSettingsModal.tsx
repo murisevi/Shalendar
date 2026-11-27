@@ -22,9 +22,10 @@ import type {
   UpdatePlanSettingsRequest,
 } from '../../shared/types';
 import { PLAN_EMOJIS } from '../../shared/dates';
-import { HOLIDAY_COUNTRIES } from '../../shared/holidays';
-import { getRemainingDays, RETENTION_PRESETS } from '../../shared/persistence';
+import { getHolidayCountries } from '../../shared/holidays';
+import { getRemainingDays, getRetentionPresets } from '../../shared/persistence';
 import { buildCoOrganizerUrl } from '../lib/storage';
+import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 interface PlanSettingsModalProps {
@@ -58,6 +59,7 @@ export function PlanSettingsModal({
   onRemoveParticipant,
   onDeletePlan,
 }: PlanSettingsModalProps) {
+  const { language, t } = useI18n();
   const [title, setTitle] = useState(plan.title);
   const [description, setDescription] = useState(plan.description);
   const [location, setLocation] = useState(plan.location);
@@ -95,6 +97,8 @@ export function PlanSettingsModal({
   if (!open) return null;
 
   const coOrgUrl = buildCoOrganizerUrl(plan.slug);
+  const holidayCountries = getHolidayCountries(language);
+  const retentionPresets = getRetentionPresets(language);
 
   function toggleRequired(id: string) {
     setRequiredIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -142,17 +146,17 @@ export function PlanSettingsModal({
             </span>
             <div>
               <h2 className="font-display text-lg font-extrabold tracking-tight">
-                Ajustes de la quedada
+                {t.settings.title}
               </h2>
               <p className="text-xs text-stone-500 dark:text-slate-400">
-                Control del organizador · cambios sincronizados en vivo.
+                {t.settings.subtitle}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cerrar"
+            aria-label={t.common.close}
             className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-stone-100 dark:hover:bg-slate-800 text-stone-500 cursor-pointer"
           >
             <X className="h-4 w-4" />
@@ -181,7 +185,7 @@ export function PlanSettingsModal({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Título
+                {t.settings.fieldTitle}
               </label>
               <input
                 type="text"
@@ -195,7 +199,7 @@ export function PlanSettingsModal({
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Lugar
+                {t.settings.fieldLocation}
               </label>
               <input
                 type="text"
@@ -208,7 +212,7 @@ export function PlanSettingsModal({
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Descripción
+                {t.settings.fieldDescription}
               </label>
               <textarea
                 rows={2}
@@ -221,39 +225,39 @@ export function PlanSettingsModal({
 
             <div>
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Modo de disponibilidad
+                {t.settings.fieldGranularity}
               </label>
               <select
                 value={granularity}
                 onChange={(e) => setGranularity(e.target.value as PlanGranularity)}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
               >
-                <option value="day">Días completos</option>
-                <option value="slots">Franjas (Mañana / Tarde / Noche)</option>
+                <option value="day">{t.settings.granularityDay}</option>
+                <option value="slots">{t.settings.granularitySlots}</option>
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Duración (búsqueda multi-día)
+                {t.settings.fieldDuration}
               </label>
               <select
                 value={durationDays}
                 onChange={(e) => setDurationDays(Number(e.target.value))}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
               >
-                <option value={1}>1 día</option>
-                <option value={2}>2 días consecutivos</option>
-                <option value={3}>3 días consecutivos</option>
-                <option value={4}>4 días consecutivos</option>
-                <option value={5}>5 días consecutivos</option>
-                <option value={7}>7 días consecutivos</option>
+                <option value={1}>{t.settings.durationDay(1)}</option>
+                <option value={2}>{t.settings.durationDay(2)}</option>
+                <option value={3}>{t.settings.durationDay(3)}</option>
+                <option value={4}>{t.settings.durationDay(4)}</option>
+                <option value={5}>{t.settings.durationDay(5)}</option>
+                <option value={7}>{t.settings.durationDay(7)}</option>
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Máximo votos por persona (0 = sin límite)
+                {t.settings.fieldMaxVotes}
               </label>
               <input
                 type="number"
@@ -267,14 +271,14 @@ export function PlanSettingsModal({
 
             <div>
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Festivos en el calendario
+                {t.settings.fieldHolidays}
               </label>
               <select
                 value={holidayCountry}
                 onChange={(e) => setHolidayCountry(e.target.value as HolidayCountry)}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
               >
-                {HOLIDAY_COUNTRIES.map((c) => (
+                {holidayCountries.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.label}
                   </option>
@@ -284,7 +288,7 @@ export function PlanSettingsModal({
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">
-                Fecha límite de votación (opcional)
+                {t.settings.fieldDeadline}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -299,7 +303,7 @@ export function PlanSettingsModal({
                     onClick={() => setVotingDeadline('')}
                     className="rounded-xl border border-stone-200 dark:border-slate-700 px-2.5 py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 cursor-pointer"
                   >
-                    Quitar
+                    {t.settings.clearDeadline}
                   </button>
                 )}
               </div>
@@ -314,7 +318,7 @@ export function PlanSettingsModal({
               className="h-4 w-4 rounded accent-teal-600"
             />
             <EyeOff className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>Voto oculto (esconde los votos de los demás hasta cerrar votación)</span>
+            <span>{t.settings.blindVotingLabel}</span>
           </label>
 
           {/* Adaptive Persistence / Retention Controls */}
@@ -322,25 +326,25 @@ export function PlanSettingsModal({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-stone-700 dark:text-slate-200">
                 <Database className="h-3.5 w-3.5 text-teal-600" />
-                Memoria y caducidad
+                {t.settings.retentionTitle}
               </span>
               {(() => {
                 const rem = getRemainingDays(plan.expiresAt);
                 return rem !== null ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
                     <Clock className="h-3 w-3" />
-                    Auto-borrado en {rem} {rem === 1 ? 'día' : 'días'}
+                    {t.settings.autoDeleteIn(rem)}
                   </span>
                 ) : (
                   <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-200">
-                    Sin caducidad automática
+                    {t.settings.noAutoExpiration}
                   </span>
                 );
               })()}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-              {RETENTION_PRESETS.map((preset) => {
+              {retentionPresets.map((preset) => {
                 const selected =
                   retentionPolicy === preset.policy &&
                   (preset.policy !== 'fixed_ttl' || retentionDays === preset.retentionDays);
@@ -365,7 +369,7 @@ export function PlanSettingsModal({
             </div>
 
             <p className="text-[11px] text-stone-500 dark:text-slate-400">
-              {RETENTION_PRESETS.find((p) => p.policy === retentionPolicy)?.description}
+              {retentionPresets.find((p) => p.policy === retentionPolicy)?.description}
             </p>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -384,7 +388,7 @@ export function PlanSettingsModal({
                   className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 dark:border-teal-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/50 transition cursor-pointer disabled:opacity-50"
                 >
                   <Clock className="h-3.5 w-3.5" />
-                  {extending ? 'Extendiendo...' : 'Extender +30 días'}
+                  {extending ? t.settings.extendingBtn : t.settings.extend30Btn}
                 </button>
               )}
               <button
@@ -393,7 +397,7 @@ export function PlanSettingsModal({
                 className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-slate-200 hover:bg-stone-100 dark:hover:bg-slate-800 transition cursor-pointer"
               >
                 <Download className="h-3.5 w-3.5" />
-                Exportar copia (.json)
+                {t.settings.exportBackupBtn}
               </button>
             </div>
           </div>
@@ -402,7 +406,7 @@ export function PlanSettingsModal({
           <div className="space-y-2 border-t border-stone-100 dark:border-slate-800 pt-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-slate-400">
-                Participantes ({participants.length}) · Marca los imprescindibles ★
+                {t.settings.participantsHeader(participants.length)}
               </span>
             </div>
             <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
@@ -418,7 +422,7 @@ export function PlanSettingsModal({
                       <span className="text-xs font-semibold truncate">{p.name}</span>
                       {p.isOrganizer && (
                         <span className="rounded-full bg-teal-100 dark:bg-teal-950/70 px-1.5 py-0.5 text-[10px] font-bold text-teal-700 dark:text-teal-300">
-                          Org
+                          {t.settings.orgBadge}
                         </span>
                       )}
                     </div>
@@ -433,17 +437,17 @@ export function PlanSettingsModal({
                         }`}
                       >
                         <Crown className="h-3 w-3" />
-                        {isReq ? 'Imprescindible' : 'Marcar clave'}
+                        {isReq ? t.settings.requiredBadge : t.settings.markKeyBtn}
                       </button>
                       {!p.isOrganizer && (
                         <button
                           type="button"
                           onClick={() => {
-                            if (window.confirm(`¿Eliminar a ${p.name} y sus respuestas?`)) {
+                            if (window.confirm(t.settings.removeParticipantConfirm(p.name))) {
                               onRemoveParticipant(p.id);
                             }
                           }}
-                          title="Eliminar participante"
+                          title={t.settings.removeParticipantTitle}
                           className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 transition cursor-pointer"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -462,7 +466,7 @@ export function PlanSettingsModal({
               <div className="flex items-center gap-2 text-xs min-w-0">
                 <ShieldCheck className="h-4 w-4 text-teal-600 shrink-0" />
                 <span className="text-stone-700 dark:text-slate-200 truncate">
-                  ¿Compartir permisos de organizador con alguien de confianza?
+                  {t.settings.coOrgPrompt}
                 </span>
               </div>
               <button
@@ -475,7 +479,7 @@ export function PlanSettingsModal({
                 className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-teal-600 hover:bg-teal-700 px-3 py-1.5 text-xs font-bold text-white cursor-pointer"
               >
                 {copiedCoAdmin ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copiedCoAdmin ? '¡Copiado!' : 'Enlace admin'}
+                {copiedCoAdmin ? t.common.copied : t.settings.coOrgBtn}
               </button>
             </div>
           )}
@@ -485,18 +489,14 @@ export function PlanSettingsModal({
             <button
               type="button"
               onClick={async () => {
-                if (
-                  window.confirm(
-                    '¿Eliminar definitivamente esta quedada para todos? Esta acción no se puede deshacer.'
-                  )
-                ) {
+                if (window.confirm(t.settings.deletePlanConfirm)) {
                   await onDeletePlan();
                 }
               }}
               className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition cursor-pointer"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Borrar quedada
+              {t.settings.deletePlanBtn}
             </button>
 
             <div className="flex items-center gap-2">
@@ -505,7 +505,7 @@ export function PlanSettingsModal({
                 onClick={onClose}
                 className="rounded-xl px-3.5 py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 cursor-pointer"
               >
-                Cancelar
+                {t.common.cancel}
               </button>
               <button
                 type="submit"
@@ -513,7 +513,7 @@ export function PlanSettingsModal({
                 className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer"
               >
                 <Save className="h-3.5 w-3.5" />
-                {saving ? 'Guardando...' : 'Guardar ajustes'}
+                {saving ? t.common.saving : t.settings.saveSettingsBtn}
               </button>
             </div>
           </div>

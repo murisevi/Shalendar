@@ -5,7 +5,8 @@ import type {
   DaySummary,
   Participant,
 } from '../../shared/types';
-import { formatDateShortPartsEs } from '../../shared/dates';
+import { formatDateShortParts } from '../../shared/dates';
+import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 interface ComparisonMatrixProps {
@@ -41,6 +42,7 @@ export function ComparisonMatrix({
   onCycleMyStatus,
   myVotedDates,
 }: ComparisonMatrixProps) {
+  const { language, t } = useI18n();
   const columns = rankedDates.slice(0, 10);
   const requiredSet = new Set(requiredParticipantIds);
 
@@ -61,11 +63,10 @@ export function ComparisonMatrix({
     return (
       <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-8 text-center">
         <p className="font-display text-base font-bold text-stone-700 dark:text-slate-200">
-          Todavía no hay datos para comparar
+          {t.matrix.emptyTitle}
         </p>
         <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
-          Marca algunos días en el calendario y aquí verás una tabla visual con la disponibilidad de
-          cada amigo.
+          {t.matrix.emptyDesc}
         </p>
       </div>
     );
@@ -81,21 +82,21 @@ export function ComparisonMatrix({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="font-display text-lg font-extrabold tracking-tight">
-            Tabla comparativa del grupo
+            {t.matrix.title}
           </h3>
           <p className="text-xs text-stone-500 dark:text-slate-400">
-            Top {columns.length} mejores fechas · {me ? 'Haz clic en tu fila para editar al instante.' : 'Vista rápida de coincidencias.'}
+            {t.matrix.subtitle(columns.length, Boolean(me))}
           </p>
         </div>
         <div className="flex items-center gap-3 text-[11px] font-medium text-stone-500 dark:text-slate-400">
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-emerald-500 inline-block" /> Puedo
+            <span className="h-3 w-3 rounded bg-emerald-500 inline-block" /> {t.matrix.legendYes}
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-amber-400 inline-block" /> Quizá
+            <span className="h-3 w-3 rounded bg-amber-400 inline-block" /> {t.matrix.legendMaybe}
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-rose-400 inline-block" /> No
+            <span className="h-3 w-3 rounded bg-rose-400 inline-block" /> {t.matrix.legendNo}
           </span>
         </div>
       </div>
@@ -105,10 +106,10 @@ export function ComparisonMatrix({
           <thead>
             <tr>
               <th className="min-w-[140px] py-2 pl-2 text-xs font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500">
-                Amigo
+                {t.matrix.friendHeader}
               </th>
               {columns.map((col) => {
-                const parts = formatDateShortPartsEs(col.date);
+                const parts = formatDateShortParts(col.date, language);
                 const isConfirmed = confirmedDate === col.date;
                 const isSel = selectedDate === col.date;
                 return (
@@ -165,7 +166,7 @@ export function ComparisonMatrix({
                       </span>
                       {isMeRow && (
                         <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400">
-                          (tú)
+                          {t.common.youTag}
                         </span>
                       )}
                     </div>
@@ -181,7 +182,7 @@ export function ComparisonMatrix({
                           note
                             ? `${p.name}: «${note}»`
                             : isMeRow
-                              ? 'Haz clic para cambiar tu disponibilidad'
+                              ? t.matrix.clickToToggleTitle
                               : undefined
                         }
                         className={`relative flex h-10 items-center justify-center rounded-xl transition ${
@@ -232,7 +233,7 @@ export function ComparisonMatrix({
             {/* Summary Footer Row */}
             <tr>
               <td className="px-2.5 pt-2 text-xs font-bold text-stone-600 dark:text-slate-300">
-                Total & Votos
+                {t.matrix.totalAndVotes}
               </td>
               {columns.map((col) => {
                 const voted = myVotedDates.has(col.date);

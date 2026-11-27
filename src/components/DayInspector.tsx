@@ -21,8 +21,9 @@ import type {
   Participant,
   PlanGranularity,
 } from '../../shared/types';
-import { TIME_SLOTS, formatDateLongEs } from '../../shared/dates';
+import { formatDateLong, getTimeSlots } from '../../shared/dates';
 import { getHolidayInfo } from '../../shared/holidays';
+import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 interface DayInspectorProps {
@@ -69,6 +70,7 @@ export function DayInspector({
   onAddComment,
   onRequireIdentity,
 }: DayInspectorProps) {
+  const { language, t } = useI18n();
   const [noteInput, setNoteInput] = useState('');
   const [personalNoteDraft, setPersonalNoteDraft] = useState(myNote);
 
@@ -80,14 +82,15 @@ export function DayInspector({
     return (
       <div className="rounded-3xl border border-stone-200/90 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-5 shadow-sm text-center space-y-2">
         <CalendarCheck className="mx-auto h-7 w-7 text-teal-500/70" />
-        <p className="font-display text-sm font-bold">Selecciona un día del calendario</p>
+        <p className="font-display text-sm font-bold">{t.inspector.emptyTitle}</p>
         <p className="text-xs text-stone-500 dark:text-slate-400">
-          Verás quién puede ir, sus notas y podrás votar ese día al instante.
+          {t.inspector.emptyDesc}
         </p>
       </div>
     );
   }
 
+  const timeSlots = getTimeSlots(language);
   const yes = summary?.yes ?? [];
   const maybe = summary?.maybe ?? [];
   const no = summary?.no ?? [];
@@ -95,7 +98,7 @@ export function DayInspector({
   const dayComments = comments.filter((c) => c.date === date);
   const participantById = new Map(participants.map((p) => [p.id, p]));
   const requiredSet = new Set(requiredParticipantIds);
-  const holiday = getHolidayInfo(date, holidayCountry);
+  const holiday = getHolidayInfo(date, holidayCountry, language);
 
   const missingRequiredNames = requiredParticipantIds
     .filter((id) => !yes.some((p) => p.id === id))
@@ -110,7 +113,7 @@ export function DayInspector({
     }
     const targetStatus = myStatus === next ? null : next;
     if (granularity === 'slots') {
-      for (const s of TIME_SLOTS) {
+      for (const s of timeSlots) {
         onSetMyStatus(date, targetStatus, s.id, targetStatus ? personalNoteDraft : undefined);
       }
     } else {
@@ -159,15 +162,15 @@ export function DayInspector({
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
-            Detalle del día
+            {t.inspector.dayDetailEyebrow}
           </p>
           <h3 className="font-display text-lg font-extrabold tracking-tight">
-            {formatDateLongEs(date)}
+            {formatDateLong(date, language)}
           </h3>
           {holiday && (
             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-rose-50 dark:bg-rose-950/60 border border-rose-200/80 dark:border-rose-800/60 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:text-rose-300">
               <Sparkles className="h-3 w-3" />
-              Festivo: {holiday.name}
+              {t.inspector.holidayTag(holiday.name)}
             </span>
           )}
         </div>
@@ -188,7 +191,7 @@ export function DayInspector({
           }`}
         >
           <Star className={`h-3.5 w-3.5 ${hasVoted ? 'fill-current' : ''}`} />
-          <span>{hasVoted ? 'Votado' : 'Votar día'}</span>
+          <span>{hasVoted ? t.inspector.votedBtn : t.inspector.voteDayBtn}</span>
         </button>
       </div>
 
@@ -196,9 +199,7 @@ export function DayInspector({
       {missingRequiredNames.length > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/70 dark:bg-amber-950/35 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-          <span>
-            Aún no confirma (imprescindible): <strong>{missingRequiredNames.join(', ')}</strong>
-          </span>
+          <span>{t.inspector.missingRequired(missingRequiredNames.join(', '))}</span>
         </div>
       )}
 
@@ -215,7 +216,7 @@ export function DayInspector({
             }`}
           >
             <Check className="h-3.5 w-3.5" />
-            Puedo
+            {t.inspector.yesBtn}
           </button>
           <button
             type="button"
@@ -227,7 +228,7 @@ export function DayInspector({
             }`}
           >
             <HelpCircle className="h-3.5 w-3.5" />
-            Quizá
+            {t.inspector.maybeBtn}
           </button>
           <button
             type="button"
@@ -239,14 +240,14 @@ export function DayInspector({
             }`}
           >
             <X className="h-3.5 w-3.5" />
-            No puedo
+            {t.inspector.noBtn}
           </button>
         </div>
 
         {/* Time-slot toggles when granularity === 'slots' */}
         {granularity === 'slots' && (
           <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-            {TIME_SLOTS.map((slot) => {
+            {timeSlots.map((slot) => {
               const mySlotSt = mySlotAvailabilityMap.get(`${date}:${slot.id}`);
               const sSum = summary?.slots?.[slot.id];
               return (
@@ -274,11 +275,11 @@ export function DayInspector({
                   </div>
                   <p className="text-[10px] text-stone-500 dark:text-slate-400 mt-0.5">
                     {mySlotSt === 'yes'
-                      ? 'Tú: Sí'
+                      ? t.inspector.youYes
                       : mySlotSt === 'maybe'
-                        ? 'Tú: Quizá'
+                        ? t.inspector.youMaybe
                         : mySlotSt === 'no'
-                          ? 'Tú: No'
+                          ? t.inspector.youNo
                           : slot.hint}
                   </p>
                 </button>
@@ -296,18 +297,18 @@ export function DayInspector({
               maxLength={140}
               value={personalNoteDraft}
               onChange={(e) => setPersonalNoteDraft(e.target.value)}
-              placeholder="Tu aclaración (ej: solo a partir de las 20:00)..."
+              placeholder={t.inspector.personalNotePlaceholder}
               className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-teal-500 transition"
             />
           </div>
           {personalNoteDraft !== myNote && (
             <button
               type="submit"
-              title="Guardar aclaración"
+              title={t.inspector.saveNoteTitle}
               className="inline-flex items-center gap-1 rounded-xl bg-teal-600 hover:bg-teal-700 px-2.5 py-1.5 text-xs font-bold text-white transition cursor-pointer shrink-0"
             >
               <Save className="h-3.5 w-3.5" />
-              Guardar
+              {t.common.save}
             </button>
           )}
         </form>
@@ -317,28 +318,28 @@ export function DayInspector({
       <div className="space-y-2.5 text-xs">
         {[
           {
-            label: 'Pueden',
+            label: t.inspector.groupYes,
             list: yes,
             dotClass: 'bg-emerald-500',
             pillClass:
               'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200/80 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-100',
           },
           {
-            label: 'Quizá',
+            label: t.inspector.groupMaybe,
             list: maybe,
             dotClass: 'bg-amber-400',
             pillClass:
               'bg-amber-50 dark:bg-amber-950/50 border-amber-200/80 dark:border-amber-800/60 text-amber-900 dark:text-amber-100',
           },
           {
-            label: 'No pueden',
+            label: t.inspector.groupNo,
             list: no,
             dotClass: 'bg-rose-500',
             pillClass:
               'bg-rose-50 dark:bg-rose-950/50 border-rose-200/80 dark:border-rose-800/60 text-rose-900 dark:text-rose-100',
           },
           {
-            label: 'Sin responder',
+            label: t.inspector.groupPending,
             list: pending,
             dotClass: 'bg-stone-300 dark:bg-slate-600',
             pillClass:
@@ -381,7 +382,7 @@ export function DayInspector({
       <div className="border-t border-stone-100 dark:border-slate-800 pt-3 space-y-2">
         <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500">
           <MessageSquare className="h-3.5 w-3.5" />
-          Comentarios de este día
+          {t.inspector.dayCommentsTitle}
         </div>
 
         {dayComments.length > 0 && (
@@ -394,7 +395,7 @@ export function DayInspector({
                   className="rounded-xl bg-stone-50 dark:bg-slate-800/60 px-3 py-2 text-xs space-y-0.5"
                 >
                   <span className="font-bold text-stone-800 dark:text-slate-100">
-                    {author?.name ?? 'Alguien'}:
+                    {author?.name ?? t.common.someoneFallback}:
                   </span>{' '}
                   <span className="text-stone-600 dark:text-slate-300">{c.body}</span>
                 </div>
@@ -409,13 +410,13 @@ export function DayInspector({
             maxLength={240}
             value={noteInput}
             onChange={(e) => setNoteInput(e.target.value)}
-            placeholder="Añadir comentario para este día..."
+            placeholder={t.inspector.dayCommentPlaceholder}
             className="flex-1 rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 px-3 py-1.5 text-xs outline-none focus:border-teal-500 transition"
           />
           <button
             type="submit"
             disabled={!noteInput.trim()}
-            aria-label="Enviar comentario"
+            aria-label={t.inspector.sendCommentAria}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white transition cursor-pointer"
           >
             <Send className="h-3.5 w-3.5" />

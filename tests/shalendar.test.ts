@@ -1,16 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { ShalendarDB } from '../server/db.js';
 import { PlanEventHub } from '../server/events.js';
 import { createApp } from '../server/app.js';
+import {
+  buildPgPoolOptions,
+  loadPersistenceConfig,
+  resolveWritableSqlitePath,
+  shouldUseSsl,
+} from '../server/persistence/index.js';
 import {
   buildGoogleCalendarUrl,
   buildIcsContent,
   buildMonthGrid,
   computeDaySummaries,
+  formatDateLong,
+  formatDateRange,
+  formatDateShortParts,
+  getMonthLabel,
+  getTimeSlots,
+  getWeekdaysShort,
   rankBestDates,
   rankBestRanges,
 } from '../shared/dates.js';
-import { getHolidayInfo } from '../shared/holidays.js';
+import { getHolidayCountries, getHolidayInfo } from '../shared/holidays.js';
+import { TRANSLATIONS } from '../src/lib/i18n.js';
 
 describe('shared date, holiday, slot, range & export logic', () => {
   it('builds a Monday-first month grid with correct week alignment', () => {
@@ -490,6 +506,183 @@ describe('Shalendar API Wave 1 & Wave 2 (Security, Recovery, Blind Voting, Slots
       headers: { Authorization: 'Bearer cron-secret-123' },
     });
     expect(okCron.status).toBe(200);
+
+    db.close();
+  });
+});
+
+describe('Persistence configuration, Northflank env detection & SQLite fallback', () => {
+  it('auto-detects PostgreSQL URLs from Northflank/PaaS env vars and skips unresolved placeholders', () => {
+    const fromPostgresUri = loadPersistenceConfig({
+      NODE_ENV: 'production',
+      POSTGRES_URI: 'postgresql://user:pass@p01--pg--abc.code.run:5432/shalendar?sslmode=require',
+    });
+    expect(fromPostgresUri.databaseUrl).toContain('p01--pg--abc.code.run');
+    expect(fromPostgresUri.databaseUrlSource).toBe('POSTGRES_URI');
+    expect(shouldUseSsl(fromPostgresUri)).toBe(true);
+
+    const poolOpts = buildPgPoolOptions(fromPostgresUri);
+    expect(poolOpts.ssl).toEqual({ rejectUnauthorized: false });
+    expect(poolOpts.connectionString).not.toContain('sslmode=');
+
+    // Unresolved template literal in DATABASE_URL falls through to real POSTGRES_URI
+    const withUnresolved = loadPersistenceConfig({
+      NODE_ENV: 'production',
+      DATABASE_URL: '${refs.shalendar_postgres.secrets.CONNECTION_STRING}',
+      POSTGRES_URI: 'postgres://user:pass@shalendar-postgres:5432/shalendar',
+    });
+    expect(withUnresolved.databaseUrlSource).toBe('POSTGRES_URI');
+    expect(withUnresolved.unresolvedDatabaseUrlVars).toEqual(['DATABASE_URL']);
+    // Single-label internal hostname in production defaults to non-SSL
+    expect(shouldUseSsl(withUnresolved)).toBe(false);
+  });
+
+  it('respects explicit sslmode=disable and DATABASE_SSL overrides', () => {
+    const disabledInUrl = loadPersistenceConfig({
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgres://u:p@db.example.com:5432/app?sslmode=disable',
+    });
+    expect(shouldUseSsl(disabledInUrl)).toBe(false);
+    expect(buildPgPoolOptions(disabledInUrl).ssl).toBe(false);
+
+    const strictVerify = loadPersistenceConfig({
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgres://u:p@db.example.com:5432/app?sslmode=verify-full',
+    });
+    const strictOpts = buildPgPoolOptions(strictVerify);
+    expect(strictOpts.connectionString).toContain('sslmode=verify-full');
+    expect(strictOpts.ssl).toBeUndefined();
+  });
+
+  it('falls back to a writable temp directory when default SQLite dir throws EACCES', () => {
+    const tmpFallback = fs.mkdtempSync(path.join(os.tmpdir(), 'shalendar-fallback-test-'));
+    const blockedDir = path.join(tmpFallback, 'blocked-parent', 'data');
+    const defaultDbPath = path.join(blockedDir, 'shalendar.db');
+
+    const origMkdir = fs.mkdirSync;
+    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation((target, opts) => {
+      if (String(target) === blockedDir) {
+        const err = new Error(`EACCES: permission denied, mkdir '${blockedDir}'`) as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return origMkdir(target, opts);
+    });
+
+    try {
+      const resolved = resolveWritableSqlitePath({
+        defaultDbPath,
+        fallbackDir: path.join(tmpFallback, 'fallback'),
+      });
+      expect(resolved.usedFallback).toBe(true);
+      expect(resolved.dbPath).toBe(path.join(tmpFallback, 'fallback', 'shalendar.db'));
+
+      // Explicit SHALENDAR_DB must still surface EACCES instead of silently redirecting
+      expect(() =>
+        resolveWritableSqlitePath({
+          explicitDbPath: defaultDbPath,
+          defaultDbPath,
+          fallbackDir: path.join(tmpFallback, 'fallback'),
+        })
+      ).toThrow(/EACCES/);
+    } finally {
+      mkdirSpy.mockRestore();
+      fs.rmSync(tmpFallback, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('i18n support (Spanish & English)', () => {
+  it('formats dates, months, weekdays, slots, holidays, and ICS in both ES and EN', () => {
+    expect(getMonthLabel('2026-12', 'es')).toBe('Diciembre 2026');
+    expect(getMonthLabel('2026-12', 'en')).toBe('December 2026');
+
+    expect(formatDateLong('2026-12-12', 'es')).toBe('Sábado, 12 de diciembre');
+    expect(formatDateLong('2026-12-12', 'en')).toBe('Saturday, December 12');
+
+    expect(formatDateRange('2026-12-11', '2026-12-13', 'es')).toBe('Vie 11 – Dom 13 de diciembre');
+    expect(formatDateRange('2026-12-11', '2026-12-13', 'en')).toBe('Fri 11 – Sun 13 Dec');
+
+    expect(formatDateShortParts('2026-12-12', 'es')).toEqual({
+      weekday: 'SÁB',
+      day: 12,
+      month: 'DIC',
+      year: 2026,
+    });
+    expect(formatDateShortParts('2026-12-12', 'en')).toEqual({
+      weekday: 'SAT',
+      day: 12,
+      month: 'DEC',
+      year: 2026,
+    });
+
+    expect(getWeekdaysShort('es')).toEqual(['L', 'M', 'X', 'J', 'V', 'S', 'D']);
+    expect(getWeekdaysShort('en')).toEqual(['M', 'T', 'W', 'T', 'F', 'S', 'S']);
+
+    expect(getTimeSlots('es').map((s) => s.label)).toEqual(['Mañana', 'Tarde', 'Noche']);
+    expect(getTimeSlots('en').map((s) => s.label)).toEqual(['Morning', 'Afternoon', 'Evening']);
+
+    expect(getHolidayInfo('2026-04-03', 'ES', 'es')?.name).toBe('Viernes Santo');
+    expect(getHolidayInfo('2026-04-03', 'ES', 'en')?.name).toBe('Good Friday');
+    expect(getHolidayInfo('2026-11-26', 'US', 'es')?.name).toBe('Acción de Gracias');
+    expect(getHolidayInfo('2026-11-26', 'US', 'en')?.name).toBe('Thanksgiving');
+
+    expect(getHolidayCountries('es').find((c) => c.id === 'none')?.label).toBe('Sin festivos');
+    expect(getHolidayCountries('en').find((c) => c.id === 'none')?.label).toBe('No holidays');
+
+    const icsEn = buildIcsContent({
+      title: 'Dinner',
+      date: '2026-12-12',
+      url: 'https://shalendar.app/e/demo',
+      lang: 'en',
+    });
+    expect(icsEn).toContain('PRODID:-//Shalendar//Plans//EN');
+    expect(icsEn).toContain('View plan:');
+  });
+
+  it('has complete structural parity between ES and EN translation dictionaries', () => {
+    const collectKeys = (obj: Record<string, unknown>, prefix = ''): string[] => {
+      const keys: string[] = [];
+      for (const [k, v] of Object.entries(obj)) {
+        const full = prefix ? `${prefix}.${k}` : k;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          keys.push(...collectKeys(v as Record<string, unknown>, full));
+        } else {
+          keys.push(full);
+        }
+      }
+      return keys.sort();
+    };
+    expect(collectKeys(TRANSLATIONS.en as unknown as Record<string, unknown>)).toEqual(
+      collectKeys(TRANSLATIONS.es as unknown as Record<string, unknown>)
+    );
+  });
+
+  it('localizes server API errors and OG SVG cards when X-Language or lang=en is sent', async () => {
+    const db = new ShalendarDB(':memory:');
+    db.seedDemoPlanIfEmpty();
+    const app = createApp(db, new PlanEventHub());
+
+    const notFoundEn = await app.request('/api/plans/does-not-exist', {
+      headers: { 'X-Language': 'en' },
+    });
+    expect(notFoundEn.status).toBe(404);
+    expect((await notFoundEn.json()) as { error: string }).toEqual({ error: 'Plan not found' });
+
+    const notFoundEs = await app.request('/api/plans/does-not-exist', {
+      headers: { 'X-Language': 'es' },
+    });
+    expect(notFoundEs.status).toBe(404);
+    expect((await notFoundEs.json()) as { error: string }).toEqual({
+      error: 'No encontramos esa quedada',
+    });
+
+    const ogEn = await app.request('/api/plans/cena-reencuentro/og.svg?lang=en');
+    expect(ogEn.status).toBe(200);
+    const svgText = await ogEn.text();
+    expect(svgText).toContain('SHALENDAR · LIVE');
+    expect(svgText).toContain('Best day:');
+    expect(svgText).toContain('Collaborative calendar');
 
     db.close();
   });

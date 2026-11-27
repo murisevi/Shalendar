@@ -28,7 +28,7 @@ Entre las opciones gratuitas evaluadas para **Node.js 22 + SSE + PostgreSQL**, *
 
 1. **Create Project:** nombre `shalendar`, región `europe-west`, plan **Developer Sandbox (Free)**.
 2. **Create Addon → PostgreSQL 16:** nombre `shalendar-postgres` (tier gratuito Sandbox).
-3. **Create Secret Group** (o enlazar desde el Addon): expón `POSTGRES_URI` / `CONNECTION_STRING` como variable `DATABASE_URL`.
+3. **Create Secret Group** (o enlazar desde el Addon): enlaza el addon `shalendar-postgres` exponiendo su `POSTGRES_URI` (Shalendar detecta automáticamente tanto `DATABASE_URL` como `POSTGRES_URI` y `POSTGRES_URL`).
 4. **Create Service → Combined Service:**
    - **Repository:** tu repo en GitHub, rama `master`.
    - **Build options:** `Dockerfile`, ruta `/Dockerfile`.
@@ -36,7 +36,7 @@ Entre las opciones gratuitas evaluadas para **Node.js 22 + SSE + PostgreSQL**, *
    - **Environment variables:**
      - `NODE_ENV=production`
      - `PORT=3001`
-     - `DATABASE_URL` (enlazada al secreto de `shalendar-postgres`)
+     - `DATABASE_URL` o `POSTGRES_URI` (enlazada desde el Secret Group del addon `shalendar-postgres`)
      - `DATABASE_SSL=auto`
      - `DEFAULT_RETENTION_POLICY=ephemeral_after_event`
      - `DEFAULT_RETENTION_DAYS=30`
@@ -44,6 +44,8 @@ Entre las opciones gratuitas evaluadas para **Node.js 22 + SSE + PostgreSQL**, *
      - `PURGE_INTERVAL_HOURS=12`
      - `ALLOW_PUBLIC_DEMO=true`
    - **Health checks:** HTTP `GET /api/health` en puerto `3001`.
+
+> **Nota sobre SQLite vs PostgreSQL:** Si despliegas el servicio sin enlazar `DATABASE_URL`/`POSTGRES_URI`, el contenedor arrancará usando SQLite local en `/app/data/shalendar.db`. Eso sirve para pruebas rápidas, pero los datos se perderán al redesplegar o reiniciar el contenedor salvo que enlaces PostgreSQL (recomendado) o montes un volumen persistente en `/app/data`.
 
 ---
 

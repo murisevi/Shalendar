@@ -12,10 +12,11 @@ import { PlanExpiredError } from './persistence/repository.js';
 import { InMemoryRateLimiter } from './persistence/security.js';
 import {
   computeDaySummaries,
-  formatDateLongEs,
-  formatDateRangeEs,
+  formatDateLong,
+  formatDateRange,
   rankBestDates,
 } from '../shared/dates.js';
+import { localizeServerError, resolveRequestLanguage } from './i18n.js';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 const isoMonthRegex = /^\d{4}-\d{2}$/;
@@ -216,6 +217,7 @@ function buildOgSvg(params: {
   location: string;
   subtitle: string;
   badge: string;
+  footer: string;
 }): string {
   const esc = escapeHtmlAttr;
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -243,7 +245,7 @@ function buildOgSvg(params: {
   }
   <rect x="112" y="400" width="976" height="92" rx="22" fill="#f5f5f4"/>
   <text x="144" y="456" font-size="28" font-weight="700" fill="#0f766e" font-family="system-ui, sans-serif">${esc(params.subtitle.slice(0, 62))}</text>
-  <text x="1088" y="540" font-size="22" font-weight="700" fill="#a8a29e" text-anchor="end" font-family="system-ui, sans-serif">Shalendar · Calendario colaborativo</text>
+  <text x="1088" y="540" font-size="22" font-weight="700" fill="#a8a29e" text-anchor="end" font-family="system-ui, sans-serif">${esc(params.footer)}</text>
 </svg>`;
 }
 
@@ -268,17 +270,41 @@ export function createApp(
 
   // Global error mapping (including 410 Gone for expired ephemeral plans)
   app.onError((err, c) => {
+    const lang = resolveRequestLanguage(c.req);
     if (err instanceof PlanExpiredError) {
-      return c.json({ error: err.message, expired: true }, 410);
+      return c.json({ error: localizeServerError(err.message, lang), expired: true }, 410);
     }
     console.error('[shalendar:api]', err);
-    return c.json({ error: 'Error interno del servidor' }, 500);
+    return c.json({ error: localizeServerError('Error interno del servidor', lang) }, 500);
   });
 
-  // Prevent search engines from indexing private plan URLs or API responses
+  // Prevent search engines from indexing private plan URLs or API responses,
+  // and automatically localize JSON error messages based on X-Language / Accept-Language.
   app.use('/api/plans/*', async (c, next) => {
     await next();
     c.header('X-Robots-Tag', 'noindex, nofollow');
+    const lang = resolveRequestLanguage(c.req);
+    if (lang === 'en' && c.res.status >= 400) {
+      const ct = c.res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        try {
+          const data = (await c.res.clone().json()) as { error?: string };
+          if (typeof data.error === 'string') {
+            const localized = localizeServerError(data.error, lang);
+            if (localized !== data.error) {
+              const headers = new Headers(c.res.headers);
+              headers.delete('content-length');
+              c.res = new Response(JSON.stringify({ ...data, error: localized }), {
+                status: c.res.status,
+                headers,
+              });
+            }
+          }
+        } catch {
+          // Keep original response if body is not valid JSON
+        }
+      }
+    }
   });
 
   const getViewerId = async (
@@ -431,6 +457,8 @@ export function createApp(
     const snapshot = await store.getPlanSnapshotBySlug(slug);
     if (!snapshot) return c.text('Not found', 404);
 
+    const lang = resolveRequestLanguage(c.req);
+    const isEn = lang === 'en';
     const { plan, participants } = snapshot;
     const summaries = computeDaySummaries({
       participants: snapshot.participants,
@@ -441,16 +469,20 @@ export function createApp(
     });
     const top = rankBestDates(summaries, 1, 'smart')[0];
 
-    let subtitle = `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'} · Marca tus días`;
-    let badge = 'SHALENDAR · EN DIRECTO';
+    let subtitle = isEn
+      ? `${participants.length} ${participants.length === 1 ? 'person joined' : 'people joined'} · Mark your days`
+      : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'} · Marca tus días`;
+    let badge = isEn ? 'SHALENDAR · LIVE' : 'SHALENDAR · EN DIRECTO';
     if (plan.confirmedDate) {
-      badge = '¡FECHA CONFIRMADA!';
+      badge = isEn ? 'DATE CONFIRMED!' : '¡FECHA CONFIRMADA!';
       const dateStr = plan.confirmedEndDate
-        ? formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate)
-        : formatDateLongEs(plan.confirmedDate);
+        ? formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)
+        : formatDateLong(plan.confirmedDate, lang);
       subtitle = `${dateStr}${plan.confirmedTime ? ` · ${plan.confirmedTime}` : ''}`;
     } else if (top) {
-      subtitle = `Mejor día: ${formatDateLongEs(top.date)} (${top.yes.length}/${participants.length} pueden)`;
+      subtitle = isEn
+        ? `Best day: ${formatDateLong(top.date, lang)} (${top.yes.length}/${participants.length} available)`
+        : `Mejor día: ${formatDateLong(top.date, lang)} (${top.yes.length}/${participants.length} pueden)`;
     }
 
     const svg = buildOgSvg({
@@ -459,6 +491,7 @@ export function createApp(
       location: plan.location,
       subtitle,
       badge,
+      footer: isEn ? 'Shalendar · Collaborative calendar' : 'Shalendar · Calendario colaborativo',
     });
 
     return c.body(svg, 200, {
@@ -1138,13 +1171,19 @@ export function createApp(
         try {
           const snapshot = await store.getPlanSnapshotBySlug(slug);
           if (snapshot) {
+            const lang = resolveRequestLanguage(c.req);
+            const isEn = lang === 'en';
             const { plan, participants } = snapshot;
             const ogTitle = `${plan.emoji} ${plan.title} — Shalendar`;
             const ogDesc = plan.confirmedDate
-              ? `¡Fecha confirmada: ${formatDateRangeEs(plan.confirmedDate, plan.confirmedEndDate)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
-              : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
+              ? isEn
+                ? `Date confirmed: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` at ${plan.confirmedTime}` : ''}! ${plan.location ? `Location: ${plan.location}.` : ''}`
+                : `¡Fecha confirmada: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
+              : isEn
+                ? `${participants.length} ${participants.length === 1 ? 'person joined' : 'people joined'}${plan.location ? ` · ${plan.location}` : ''}. Open to mark your available days and vote for your favorite.`
+                : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
             const origin = new URL(c.req.url).origin;
-            const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg`;
+            const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg${isEn ? '?lang=en' : ''}`;
 
             const metaInjection = [
               `<meta property="og:type" content="website" />`,

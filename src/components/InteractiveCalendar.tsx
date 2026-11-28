@@ -22,6 +22,7 @@ import type {
   HolidayCountry,
   Participant,
   PlanGranularity,
+  SpecificSlot,
 } from '../../shared/types';
 import {
   addMonthsISO,
@@ -29,10 +30,11 @@ import {
   formatDateISO,
   getMonthLabel,
   getMonthShortLabel,
-  getTimeSlots,
+  getPlanTimeSlots,
   getWeekdaysShort,
   isFriSatSun,
   isSaturdayOrSunday,
+  isSlotGranularity,
 } from '../../shared/dates';
 import { getHolidayInfo } from '../../shared/holidays';
 import { useI18n } from '../lib/i18n';
@@ -46,6 +48,9 @@ interface InteractiveCalendarProps {
   participants: Participant[];
   me: Participant | null;
   granularity: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
+  activeSlot?: AvailabilitySlot;
+  onChangeActiveSlot?: (slot: AvailabilitySlot) => void;
   holidayCountry: HolidayCountry;
   requiredParticipantIds: string[];
   onlineParticipantIds: Set<string>;
@@ -118,6 +123,9 @@ export function InteractiveCalendar({
   participants,
   me,
   granularity,
+  enabledSlots,
+  activeSlot: controlledActiveSlot,
+  onChangeActiveSlot,
   holidayCountry,
   requiredParticipantIds,
   onlineParticipantIds,
@@ -143,14 +151,32 @@ export function InteractiveCalendar({
 }: InteractiveCalendarProps) {
   const { language, t } = useI18n();
   const [desktopBrush, setBrush] = useState<BrushMode>('yes');
-  const [activeSlot, setActiveSlot] = useState<AvailabilitySlot>('all');
+  const [uncontrolledActiveSlot, setUncontrolledActiveSlot] = useState<AvailabilitySlot>('all');
   const [onlyMineMode, setOnlyMineMode] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   // On mobile, browsing never paints: the brush is only active inside "Mark my days" mode.
   const brush: BrushMode = mobile ? (paintMode ? mobileBrush : 'inspect') : desktopBrush;
   const mobileBrowsing = mobile && !paintMode;
 
-  const timeSlots = useMemo(() => getTimeSlots(language), [language]);
+  const useSlots = isSlotGranularity(granularity);
+  const planSlots = useMemo(
+    () => getPlanTimeSlots(granularity, enabledSlots, language),
+    [granularity, enabledSlots, language]
+  );
+  const singleSlot = useSlots && planSlots.length === 1 ? planSlots[0] : null;
+  const rawActiveSlot = controlledActiveSlot ?? uncontrolledActiveSlot;
+  const activeSlot: AvailabilitySlot = !useSlots
+    ? 'all'
+    : singleSlot
+      ? singleSlot.id
+      : rawActiveSlot !== 'all' && planSlots.some((s) => s.id === rawActiveSlot)
+        ? rawActiveSlot
+        : 'all';
+  const setActiveSlot = (next: AvailabilitySlot) => {
+    if (onChangeActiveSlot) onChangeActiveSlot(next);
+    else setUncontrolledActiveSlot(next);
+  };
+
   const weekdaysShort = useMemo(() => getWeekdaysShort(language), [language]);
 
   // Drag-painting state (mouse + mobile touch)
@@ -164,15 +190,15 @@ export function InteractiveCalendar({
   const cells = useMemo(() => buildMonthGrid(currentMonth, todayISO), [currentMonth, todayISO]);
   const requiredSet = useMemo(() => new Set(requiredParticipantIds), [requiredParticipantIds]);
 
-  const effectiveSlot: AvailabilitySlot = granularity === 'slots' ? activeSlot : 'all';
+  const effectiveSlot: AvailabilitySlot = useSlots ? activeSlot : 'all';
 
   function expandSlotChanges(
     dates: Array<{ date: string; status: AvailabilityStatus | null }>
   ): Array<{ date: string; slot: AvailabilitySlot; status: AvailabilityStatus | null }> {
-    if (granularity === 'slots' && activeSlot === 'all') {
+    if (useSlots && activeSlot === 'all') {
       const out: Array<{ date: string; slot: AvailabilitySlot; status: AvailabilityStatus | null }> = [];
       for (const item of dates) {
-        for (const s of timeSlots) {
+        for (const s of planSlots) {
           out.push({ date: item.date, slot: s.id, status: item.status });
         }
         out.push({ date: item.date, slot: 'all', status: null });
@@ -212,8 +238,8 @@ export function InteractiveCalendar({
   });
 
   function getMyStatusForCurrentSlot(date: string): AvailabilityStatus | undefined {
-    if (granularity === 'slots' && activeSlot !== 'all') {
-      return mySlotAvailabilityMap.get(`${date}:${activeSlot}`);
+    if (useSlots && activeSlot !== 'all') {
+      return mySlotAvailabilityMap.get(`${date}:${activeSlot}`) ?? mySlotAvailabilityMap.get(`${date}:all`);
     }
     return myAvailabilityMap.get(date);
   }
@@ -308,15 +334,20 @@ export function InteractiveCalendar({
       return;
     }
     const targetDates = cells
-      .filter((c) => c.inCurrentMonth && myAvailabilityMap.has(c.date))
+      .filter(
+        (c) =>
+          c.inCurrentMonth &&
+          (myAvailabilityMap.has(c.date) ||
+            planSlots.some((s) => mySlotAvailabilityMap.has(`${c.date}:${s.id}`)))
+      )
       .map((c) => c.date);
     if (targetDates.length === 0) return;
 
     const changes: Array<{ date: string; slot: AvailabilitySlot; status: AvailabilityStatus | null }> = [];
     for (const date of targetDates) {
       changes.push({ date, slot: 'all', status: null });
-      if (granularity === 'slots') {
-        for (const s of timeSlots) {
+      if (useSlots) {
+        for (const s of planSlots) {
           changes.push({ date, slot: s.id, status: null });
         }
       }
@@ -431,11 +462,18 @@ export function InteractiveCalendar({
           </div>
         </div>
 
-        {/* Time-Slot Selector (when granularity === 'slots') */}
-        {granularity === 'slots' && (
+        {/* Time-Slot / Meal Selector (when granularity is 'slots' or 'meals') */}
+        {useSlots && singleSlot && (
+          <div className="flex items-center gap-2 border-t border-stone-100 dark:border-slate-800 pt-2.5 text-xs font-semibold text-teal-800 dark:text-teal-200">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 dark:border-teal-800/70 bg-teal-50/80 dark:bg-teal-950/50 px-3 py-1">
+              {t.calendar.slotBannerSingle(singleSlot.emoji, singleSlot.label, singleSlot.hint)}
+            </span>
+          </div>
+        )}
+        {useSlots && planSlots.length > 1 && (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-stone-100 dark:border-slate-800 pt-2.5">
             <span className="text-xs font-semibold text-stone-500 dark:text-slate-400 mr-1">
-              {t.calendar.slotToPaint}
+              {brush === 'inspect' ? t.calendar.slotFilterLabel : t.calendar.slotToPaint}
             </span>
             <button
               type="button"
@@ -446,9 +484,11 @@ export function InteractiveCalendar({
                   : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
               }`}
             >
-              {t.calendar.allDaySlots}
+              {brush === 'inspect'
+                ? `✨ ${t.calendar.allSlotsBest}`
+                : t.calendar.allActiveSlots(planSlots.map((s) => s.shortLabel).join('+'))}
             </button>
-            {timeSlots.map((slot) => (
+            {planSlots.map((slot) => (
               <button
                 key={slot.id}
                 type="button"
@@ -605,27 +645,49 @@ export function InteractiveCalendar({
           </div>
         )}
 
-        {/* Mobile paint-mode extras: time slot + quick bulk actions */}
+        {/* Mobile slot strip: visible both while browsing (filter heatmap) and painting */}
+        {mobile && useSlots && singleSlot && (
+          <div className="mb-2.5 flex items-center">
+            <span className="inline-flex items-center gap-1 rounded-full border border-teal-200 dark:border-teal-800/70 bg-teal-50/80 dark:bg-teal-950/50 px-2.5 py-1 text-[11px] font-semibold text-teal-800 dark:text-teal-200">
+              {t.calendar.slotBannerSingle(singleSlot.emoji, singleSlot.label, singleSlot.hint)}
+            </span>
+          </div>
+        )}
+        {mobile && useSlots && planSlots.length > 1 && (
+          <div className="-mx-3 mb-2.5 flex gap-1.5 overflow-x-auto no-scrollbar px-3 animate-fade-in">
+            <button
+              type="button"
+              onClick={() => setActiveSlot('all')}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                activeSlot === 'all'
+                  ? 'border-teal-500 bg-teal-600 text-white'
+                  : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+              }`}
+            >
+              {paintMode
+                ? t.calendar.allActiveSlots(planSlots.map((s) => s.shortLabel).join('+'))
+                : `✨ ${t.calendar.allSlotsBest}`}
+            </button>
+            {planSlots.map((slot) => (
+              <button
+                key={slot.id}
+                type="button"
+                onClick={() => setActiveSlot(slot.id)}
+                className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                  activeSlot === slot.id
+                    ? 'border-teal-500 bg-teal-600 text-white'
+                    : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+                }`}
+              >
+                {slot.emoji} {slot.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Mobile paint-mode extras: quick bulk actions */}
         {mobile && paintMode && (
           <div className="-mx-3 mb-2.5 flex gap-1.5 overflow-x-auto no-scrollbar px-3 animate-fade-in">
-            {granularity === 'slots' &&
-              [{ id: 'all' as const, label: t.calendar.allDaySlots, emoji: '' }, ...timeSlots].map(
-                (slot) => (
-                  <button
-                    key={slot.id}
-                    type="button"
-                    onClick={() => setActiveSlot(slot.id)}
-                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-                      activeSlot === slot.id
-                        ? 'border-teal-500 bg-teal-600 text-white'
-                        : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {slot.emoji ? `${slot.emoji} ` : ''}
-                    {slot.label}
-                  </button>
-                )
-              )}
             <button
               type="button"
               onClick={handlePaintWeekends}
@@ -737,15 +799,21 @@ export function InteractiveCalendar({
         >
           {cells.map((cell, cellIdx) => {
             const summary = summaries.get(cell.date);
+            const focusedSlotSummary =
+              useSlots && activeSlot !== 'all' ? summary?.slots?.[activeSlot] : undefined;
             const hasDragOverride = dragPreview.has(cell.date);
             const effectiveMyStatus = hasDragOverride
               ? dragPreview.get(cell.date) ?? undefined
               : getMyStatusForCurrentSlot(cell.date);
 
-            const yesCount = summary?.yes.length ?? 0;
-            const maybeCount = summary?.maybe.length ?? 0;
+            const displayYes = focusedSlotSummary ? focusedSlotSummary.yes : summary?.yes ?? [];
+            const displayMaybe = focusedSlotSummary
+              ? focusedSlotSummary.maybe
+              : summary?.maybe ?? [];
+            const yesCount = displayYes.length;
+            const maybeCount = displayMaybe.length;
             const voteCount = summary?.votes.length ?? 0;
-            const ratio = summary?.ratio ?? 0;
+            const ratio = focusedSlotSummary ? focusedSlotSummary.ratio : summary?.ratio ?? 0;
             const hasAny = yesCount > 0 || maybeCount > 0;
             const isSelected = selectedDate === cell.date;
             const isConfirmed =
@@ -757,14 +825,20 @@ export function InteractiveCalendar({
             const isWeekendReal = isSaturdayOrSunday(cell.date);
             const holiday = getHolidayInfo(cell.date, holidayCountry, language);
 
-            const isDimmedByFilter =
-              filterParticipantIds.length > 0 && !(summary?.allFilteredAvailable ?? false);
+            const slotMatchesFilter =
+              focusedSlotSummary !== undefined
+                ? activeParticipantCount > 0 && yesCount === activeParticipantCount
+                : summary?.allFilteredAvailable ?? false;
+            const isDimmedByFilter = filterParticipantIds.length > 0 && !slotMatchesFilter;
             const isPerfectMatch =
               filterParticipantIds.length > 0
-                ? summary?.allFilteredAvailable ?? false
+                ? slotMatchesFilter
                 : activeParticipantCount >= 2 && yesCount === activeParticipantCount;
-            const missingRequired =
-              requiredSet.size > 0 && hasAny && !(summary?.allRequiredAvailable ?? true);
+            const slotAllRequired =
+              focusedSlotSummary !== undefined
+                ? focusedSlotSummary.allRequiredAvailable
+                : summary?.allRequiredAvailable ?? true;
+            const missingRequired = requiredSet.size > 0 && hasAny && !slotAllRequired;
 
             const heatmapClass = getHeatmapClasses(
               ratio,
@@ -929,12 +1003,20 @@ export function InteractiveCalendar({
                   )}
                 </div>
 
-                {/* Middle: Holiday short label OR 3 Time-Slot Mini Bars */}
-                {granularity === 'slots' ? (
-                  <div className="my-1 grid grid-cols-3 gap-0.5">
-                    {timeSlots.map((slot) => {
+                {/* Middle: Holiday short label OR Dynamic Time-Slot Mini Bars */}
+                {useSlots && planSlots.length > 1 ? (
+                  <div
+                    className="my-1 grid gap-0.5"
+                    style={{
+                      gridTemplateColumns: `repeat(${planSlots.length}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {planSlots.map((slot) => {
                       const sSummary = summary?.slots?.[slot.id];
-                      const mySlotSt = mySlotAvailabilityMap.get(`${cell.date}:${slot.id}`);
+                      const mySlotSt =
+                        mySlotAvailabilityMap.get(`${cell.date}:${slot.id}`) ??
+                        mySlotAvailabilityMap.get(`${cell.date}:all`);
+                      const isFocusedSlot = activeSlot === slot.id;
                       const slotActive = onlyMineMode
                         ? mySlotSt === 'yes'
                           ? 'bg-emerald-400'
@@ -952,7 +1034,9 @@ export function InteractiveCalendar({
                         <span
                           key={slot.id}
                           title={t.calendar.slotAvailableTitle(slot.label, sSummary?.yes.length ?? 0)}
-                          className={`h-1.5 rounded-full ${slotActive}`}
+                          className={`h-1.5 rounded-full transition-opacity ${slotActive} ${
+                            activeSlot !== 'all' && !isFocusedSlot ? 'opacity-35' : ''
+                          } ${isFocusedSlot ? 'ring-1 ring-teal-700/60 dark:ring-white/70' : ''}`}
                         />
                       );
                     })}
@@ -970,17 +1054,17 @@ export function InteractiveCalendar({
 
                 {/* Bottom row: Friend dots + consensus count + vote star */}
                 <div className={`mt-auto pt-0.5 flex items-end justify-between ${mobile ? 'gap-0.5' : 'gap-1'}`}>
-                  {!onlyMineMode && summary && (yesCount > 0 || maybeCount > 0) ? (
+                  {!onlyMineMode && (yesCount > 0 || maybeCount > 0) ? (
                     <div className="flex items-center gap-1 min-w-0">
                       <div className="hidden sm:flex items-center -space-x-1">
-                        {summary.yes.slice(0, 3).map((p) => (
+                        {displayYes.slice(0, 3).map((p) => (
                           <span
                             key={p.id}
                             style={{ backgroundColor: p.avatarColor }}
                             className="h-2.5 w-2.5 rounded-full ring-1 ring-white/90 dark:ring-slate-900/90"
                           />
                         ))}
-                        {summary.maybe.slice(0, Math.max(0, 3 - summary.yes.length)).map((p) => (
+                        {displayMaybe.slice(0, Math.max(0, 3 - displayYes.length)).map((p) => (
                           <span
                             key={p.id}
                             style={{ backgroundColor: p.avatarColor }}
@@ -1061,14 +1145,23 @@ export function InteractiveCalendar({
                 {t.calendar.legendHoliday}
               </span>
             )}
-            {granularity === 'slots' && (
+            {useSlots && planSlots.length > 1 && (
               <span className="inline-flex items-center gap-1">
                 <span className="inline-flex gap-0.5">
-                  <span className="h-1.5 w-2 rounded-full bg-emerald-500" />
-                  <span className="h-1.5 w-2 rounded-full bg-teal-400" />
-                  <span className="h-1.5 w-2 rounded-full bg-stone-300" />
+                  {planSlots.map((s, idx) => (
+                    <span
+                      key={s.id}
+                      className={`h-1.5 w-2 rounded-full ${
+                        idx === 0
+                          ? 'bg-emerald-500'
+                          : idx === 1
+                            ? 'bg-teal-400'
+                            : 'bg-stone-300 dark:bg-slate-600'
+                      }`}
+                    />
+                  ))}
                 </span>
-                {t.calendar.legendSlotsShort}
+                {planSlots.map((s) => s.shortLabel).join(' · ')}
               </span>
             )}
             <span className="inline-flex items-center gap-1">

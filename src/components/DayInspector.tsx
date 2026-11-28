@@ -20,8 +20,9 @@ import type {
   HolidayCountry,
   Participant,
   PlanGranularity,
+  SpecificSlot,
 } from '../../shared/types';
-import { formatDateLong, getTimeSlots } from '../../shared/dates';
+import { formatDateLong, getPlanTimeSlots, isSlotGranularity } from '../../shared/dates';
 import { getHolidayInfo } from '../../shared/holidays';
 import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
@@ -32,6 +33,8 @@ interface DayInspectorProps {
   participants: Participant[];
   me: Participant | null;
   granularity: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
+  preferredSlot?: SpecificSlot | null;
   holidayCountry: HolidayCountry;
   requiredParticipantIds: string[];
   myStatus: AvailabilityStatus | undefined;
@@ -61,6 +64,8 @@ export function DayInspector({
   participants,
   me,
   granularity,
+  enabledSlots,
+  preferredSlot = null,
   holidayCountry,
   requiredParticipantIds,
   myStatus,
@@ -83,10 +88,30 @@ export function DayInspector({
   const fieldSize = isSheet ? 'py-2.5 text-sm' : 'py-1.5 text-xs';
   const [noteInput, setNoteInput] = useState('');
   const [personalNoteDraft, setPersonalNoteDraft] = useState(myNote);
+  const useSlots = isSlotGranularity(granularity);
+  const planSlots = getPlanTimeSlots(granularity, enabledSlots, language);
+  const singleSlot = useSlots && planSlots.length === 1 ? planSlots[0] : null;
+  const [inspectedSlot, setInspectedSlot] = useState<SpecificSlot | null>(null);
 
   useEffect(() => {
     setPersonalNoteDraft(myNote);
   }, [date, myNote]);
+
+  useEffect(() => {
+    if (!useSlots || planSlots.length === 0) {
+      setInspectedSlot(null);
+      return;
+    }
+    if (preferredSlot && planSlots.some((s) => s.id === preferredSlot)) {
+      setInspectedSlot(preferredSlot);
+      return;
+    }
+    if (summary?.bestSlot && planSlots.some((s) => s.id === summary.bestSlot)) {
+      setInspectedSlot(summary.bestSlot);
+      return;
+    }
+    setInspectedSlot(planSlots[0].id);
+  }, [date, preferredSlot, useSlots, granularity, enabledSlots?.join(','), summary?.bestSlot]);
 
   if (!date) {
     return (
@@ -100,11 +125,24 @@ export function DayInspector({
     );
   }
 
-  const timeSlots = getTimeSlots(language);
-  const yes = summary?.yes ?? [];
-  const maybe = summary?.maybe ?? [];
-  const no = summary?.no ?? [];
-  const pending = summary?.pending ?? participants;
+  const effectiveInspectedSlot =
+    useSlots && inspectedSlot && planSlots.some((s) => s.id === inspectedSlot)
+      ? inspectedSlot
+      : useSlots
+        ? (summary?.bestSlot && planSlots.some((s) => s.id === summary.bestSlot)
+            ? summary.bestSlot
+            : planSlots[0]?.id ?? null)
+        : null;
+  const activeSlotSummary =
+    effectiveInspectedSlot && summary?.slots ? summary.slots[effectiveInspectedSlot] : undefined;
+  const activeSlotMeta = effectiveInspectedSlot
+    ? planSlots.find((s) => s.id === effectiveInspectedSlot) ?? null
+    : null;
+
+  const yes = activeSlotSummary ? activeSlotSummary.yes : summary?.yes ?? [];
+  const maybe = activeSlotSummary ? activeSlotSummary.maybe : summary?.maybe ?? [];
+  const no = activeSlotSummary ? activeSlotSummary.no : summary?.no ?? [];
+  const pending = activeSlotSummary ? activeSlotSummary.pending : summary?.pending ?? participants;
   const dayComments = comments.filter((c) => c.date === date);
   const participantById = new Map(participants.map((p) => [p.id, p]));
   const requiredSet = new Set(requiredParticipantIds);
@@ -115,26 +153,40 @@ export function DayInspector({
     .map((id) => participantById.get(id)?.name)
     .filter((n): n is string => Boolean(n));
 
+  function getMySlotStatus(slotId: SpecificSlot): AvailabilityStatus | undefined {
+    return mySlotAvailabilityMap.get(`${date}:${slotId}`) ?? mySlotAvailabilityMap.get(`${date}:all`);
+  }
+
+  const myWholeDayHighlight: AvailabilityStatus | undefined =
+    useSlots && planSlots.length > 1
+      ? (['yes', 'maybe', 'no'] as const).find((st) =>
+          planSlots.every((s) => getMySlotStatus(s.id) === st)
+        )
+      : singleSlot
+        ? getMySlotStatus(singleSlot.id)
+        : myStatus;
+
   function handleQuickStatus(next: AvailabilityStatus) {
     if (!date) return;
     if (!me) {
       onRequireIdentity();
       return;
     }
-    const targetStatus = myStatus === next ? null : next;
+    const targetStatus = myWholeDayHighlight === next ? null : next;
     onSetMyDayStatus(date, targetStatus, targetStatus ? personalNoteDraft : undefined);
   }
 
-  function handleToggleSlot(slotId: 'morning' | 'afternoon' | 'evening') {
+  function handleToggleSlot(slotId: SpecificSlot) {
     if (!date) return;
     if (!me) {
       onRequireIdentity();
       return;
     }
-    const cur = mySlotAvailabilityMap.get(`${date}:${slotId}`);
+    const cur = getMySlotStatus(slotId);
     const next: AvailabilityStatus | null =
       cur === 'yes' ? 'maybe' : cur === 'maybe' ? 'no' : cur === 'no' ? null : 'yes';
     onSetMyStatus(date, next, slotId);
+    setInspectedSlot(slotId);
   }
 
   function handleSavePersonalNote(e: React.FormEvent) {
@@ -215,24 +267,89 @@ export function DayInspector({
 
       {/* Quick personal availability controls */}
       <div className="space-y-2.5">
+        {/* Per-slot / per-meal toggles first when multiple slots are active */}
+        {useSlots && planSlots.length > 1 && (
+          <div className="space-y-1.5">
+            <div
+              className={`grid gap-1.5 ${
+                planSlots.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+              }`}
+            >
+              {planSlots.map((slot) => {
+                const mySlotSt = getMySlotStatus(slot.id);
+                const sSum = summary?.slots?.[slot.id];
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    onClick={() => handleToggleSlot(slot.id)}
+                    className={`rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                      mySlotSt === 'yes'
+                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-100'
+                        : mySlotSt === 'maybe'
+                          ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-100'
+                          : mySlotSt === 'no'
+                            ? 'border-rose-300 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200'
+                            : 'border-stone-200 dark:border-slate-700 bg-stone-50/60 dark:bg-slate-800/50 hover:border-teal-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-xs font-bold">
+                      <span className="truncate">
+                        {slot.emoji} {slot.label}
+                      </span>
+                      <span className="tabular-nums text-[10px] opacity-80 shrink-0">
+                        {sSum?.yes.length ?? 0}✓
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-stone-500 dark:text-slate-400 mt-0.5 truncate">
+                      {mySlotSt === 'yes'
+                        ? t.inspector.youYes
+                        : mySlotSt === 'maybe'
+                          ? t.inspector.youMaybe
+                          : mySlotSt === 'no'
+                            ? t.inspector.youNo
+                            : slot.hint}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-stone-400 dark:text-slate-500">
+              {t.inspector.slotTapHint}
+            </p>
+          </div>
+        )}
+
+        {singleSlot && (
+          <p className="text-xs font-semibold text-teal-800 dark:text-teal-200">
+            {t.inspector.markSlotLabel(singleSlot.emoji, singleSlot.label)}
+          </p>
+        )}
+
+        {useSlots && planSlots.length > 1 && (
+          <p className="text-[11px] font-semibold text-stone-500 dark:text-slate-400 pt-0.5">
+            {t.inspector.markAllSlotsLabel}
+          </p>
+        )}
+
         <div className="grid grid-cols-3 gap-1.5">
           <button
             type="button"
             onClick={() => handleQuickStatus('yes')}
             className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
-              myStatus === 'yes'
+              myWholeDayHighlight === 'yes'
                 ? 'border-emerald-600 bg-emerald-600 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-stone-700 dark:text-slate-200'
             }`}
           >
-            <Check className={isSheet ? "h-4 w-4" : "h-3.5 w-3.5"} />
+            <Check className={isSheet ? 'h-4 w-4' : 'h-3.5 w-3.5'} />
             {t.inspector.yesBtn}
           </button>
           <button
             type="button"
             onClick={() => handleQuickStatus('maybe')}
             className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
-              myStatus === 'maybe'
+              myWholeDayHighlight === 'maybe'
                 ? 'border-amber-500 bg-amber-500 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-amber-50 dark:hover:bg-amber-950/50 text-stone-700 dark:text-slate-200'
             }`}
@@ -244,7 +361,7 @@ export function DayInspector({
             type="button"
             onClick={() => handleQuickStatus('no')}
             className={`inline-flex items-center justify-center gap-1 border font-bold transition cursor-pointer ${statusBtnSize} ${
-              myStatus === 'no'
+              myWholeDayHighlight === 'no'
                 ? 'border-rose-500 bg-rose-500 text-white'
                 : 'border-stone-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-stone-700 dark:text-slate-200'
             }`}
@@ -253,50 +370,6 @@ export function DayInspector({
             {t.inspector.noBtn}
           </button>
         </div>
-
-        {/* Time-slot toggles when granularity === 'slots' */}
-        {granularity === 'slots' && (
-          <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-            {timeSlots.map((slot) => {
-              const mySlotSt = mySlotAvailabilityMap.get(`${date}:${slot.id}`);
-              const sSum = summary?.slots?.[slot.id];
-              return (
-                <button
-                  key={slot.id}
-                  type="button"
-                  onClick={() => handleToggleSlot(slot.id)}
-                  className={`rounded-xl border p-2 text-left transition cursor-pointer ${
-                    mySlotSt === 'yes'
-                      ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-100'
-                      : mySlotSt === 'maybe'
-                        ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-100'
-                        : mySlotSt === 'no'
-                          ? 'border-rose-300 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200'
-                          : 'border-stone-200 dark:border-slate-700 bg-stone-50/60 dark:bg-slate-800/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span>
-                      {slot.emoji} {slot.label}
-                    </span>
-                    <span className="tabular-nums text-[10px] opacity-80">
-                      {sSum?.yes.length ?? 0}✓
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-stone-500 dark:text-slate-400 mt-0.5">
-                    {mySlotSt === 'yes'
-                      ? t.inspector.youYes
-                      : mySlotSt === 'maybe'
-                        ? t.inspector.youMaybe
-                        : mySlotSt === 'no'
-                          ? t.inspector.youNo
-                          : slot.hint}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {/* Personal availability note for this day */}
         <form onSubmit={handleSavePersonalNote} className="flex items-center gap-1.5">
@@ -325,8 +398,39 @@ export function DayInspector({
         </form>
       </div>
 
-      {/* People Breakdown (with personal availability notes shown inline!) */}
+      {/* People Breakdown (slot-scoped when multiple slots are active, with personal notes inline!) */}
       <div className="space-y-2.5 text-xs">
+        {useSlots && planSlots.length > 1 && (
+          <div className="space-y-1.5 border-t border-stone-100 dark:border-slate-800 pt-2.5">
+            {activeSlotMeta && (
+              <p className="text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500">
+                {t.inspector.whoCanMakeSlot(`${activeSlotMeta.emoji} ${activeSlotMeta.label}`)}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-1">
+              {planSlots.map((slot) => {
+                const sCount = summary?.slots?.[slot.id]?.yes.length ?? 0;
+                const active = effectiveInspectedSlot === slot.id;
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    onClick={() => setInspectedSlot(slot.id)}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                      active
+                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                        : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <span>{slot.emoji}</span>
+                    <span>{slot.label}</span>
+                    <span className="tabular-nums opacity-75">({sCount})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {[
           {
             label: t.inspector.groupYes,

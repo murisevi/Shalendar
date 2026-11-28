@@ -4,8 +4,11 @@ export type { PlanVisibility, RetentionPolicy };
 
 export type Language = 'es' | 'en';
 export type AvailabilityStatus = 'yes' | 'maybe' | 'no';
-export type AvailabilitySlot = 'all' | 'morning' | 'afternoon' | 'evening';
-export type PlanGranularity = 'day' | 'slots';
+export type DayPartSlot = 'morning' | 'afternoon' | 'evening';
+export type MealSlot = 'breakfast' | 'lunch' | 'snack' | 'dinner';
+export type SpecificSlot = DayPartSlot | MealSlot;
+export type AvailabilitySlot = 'all' | SpecificSlot;
+export type PlanGranularity = 'day' | 'slots' | 'meals';
 export type RsvpStatus = 'going' | 'maybe' | 'not_going';
 export type SubPollCategory = 'place' | 'activity' | 'other';
 export type HolidayCountry = 'ES' | 'MX' | 'AR' | 'CO' | 'US' | 'none';
@@ -24,6 +27,7 @@ export interface Plan {
   votingDeadline: string | null; // ISO datetime
   blindVoting: boolean;
   granularity: PlanGranularity;
+  enabledSlots: SpecificSlot[];
   durationDays: number; // 1 = single day, 2..7 = multi-day range
   holidayCountry: HolidayCountry;
   requiredParticipantIds: string[];
@@ -163,6 +167,7 @@ export interface CreatePlanRequest {
   endMonth?: string;
   maxVotesPerUser?: number;
   granularity?: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
   durationDays?: number;
   votingDeadline?: string | null;
   blindVoting?: boolean;
@@ -236,6 +241,7 @@ export interface UpdatePlanSettingsRequest {
   votingDeadline?: string | null;
   blindVoting?: boolean;
   granularity?: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
   durationDays?: number;
   holidayCountry?: HolidayCountry;
   requiredParticipantIds?: string[];
@@ -295,12 +301,14 @@ export interface AddCarpoolRequest {
 }
 
 export interface SlotDaySummary {
-  slot: AvailabilitySlot;
+  slot: SpecificSlot;
   yes: Participant[];
   maybe: Participant[];
   no: Participant[];
+  pending: Participant[];
   score: number;
   ratio: number;
+  allRequiredAvailable: boolean;
 }
 
 export interface DaySummary {
@@ -317,8 +325,8 @@ export interface DaySummary {
   allRequiredAvailable: boolean;
   notesByParticipant: Record<string, string>;
   hasNotes: boolean;
-  slots?: Record<'morning' | 'afternoon' | 'evening', SlotDaySummary>;
-  bestSlot?: 'morning' | 'afternoon' | 'evening' | null;
+  slots?: Partial<Record<SpecificSlot, SlotDaySummary>>;
+  bestSlot?: SpecificSlot | null;
 }
 
 export interface DateRangeSummary {

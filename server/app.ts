@@ -16,6 +16,7 @@ import {
   computeDaySummaries,
   formatDateLong,
   formatDateRange,
+  getSlotMeta,
   isVotingEffectivelyOpen,
   rankBestDates,
 } from '../shared/dates.js';
@@ -26,6 +27,27 @@ const retentionPolicyEnum = z.enum([
   'fixed_ttl',
   'sliding_inactivity',
   'persistent',
+]);
+
+const granularityEnum = z.enum(['day', 'slots', 'meals']);
+const specificSlotEnum = z.enum([
+  'morning',
+  'afternoon',
+  'evening',
+  'breakfast',
+  'lunch',
+  'snack',
+  'dinner',
+]);
+const availabilitySlotEnum = z.enum([
+  'all',
+  'morning',
+  'afternoon',
+  'evening',
+  'breakfast',
+  'lunch',
+  'snack',
+  'dinner',
 ]);
 
 const createPlanSchema = z.object({
@@ -40,7 +62,8 @@ const createPlanSchema = z.object({
   startMonth: calendarMonthSchema.optional(),
   endMonth: calendarMonthSchema.optional(),
   maxVotesPerUser: z.number().int().min(0).max(20).optional(),
-  granularity: z.enum(['day', 'slots']).optional(),
+  granularity: granularityEnum.optional(),
+  enabledSlots: z.array(specificSlotEnum).max(7).optional(),
   durationDays: z.number().int().min(1).max(7).optional(),
   votingDeadline: deadlineSchema.nullable().optional(),
   blindVoting: z.boolean().optional(),
@@ -82,7 +105,7 @@ const availabilityBatchSchema = z.object({
     .array(
       z.object({
         date: calendarDateSchema,
-        slot: z.enum(['all', 'morning', 'afternoon', 'evening']).optional(),
+        slot: availabilitySlotEnum.optional(),
         status: z.enum(['yes', 'maybe', 'no']).nullable(),
         note: z.string().max(160).optional(),
       })
@@ -119,7 +142,8 @@ const updateSettingsSchema = z.object({
   votingOpen: z.boolean().optional(),
   votingDeadline: deadlineSchema.nullable().optional(),
   blindVoting: z.boolean().optional(),
-  granularity: z.enum(['day', 'slots']).optional(),
+  granularity: granularityEnum.optional(),
+  enabledSlots: z.array(specificSlotEnum).max(7).optional(),
   durationDays: z.number().int().min(1).max(7).optional(),
   holidayCountry: z.enum(['ES', 'MX', 'AR', 'CO', 'US', 'none']).optional(),
   requiredParticipantIds: z.array(z.string().min(1)).max(30).optional(),
@@ -547,6 +571,7 @@ export function createApp(
       votes: snapshot.votes,
       pollOptions: snapshot.pollOptions,
       granularity: plan.granularity,
+      enabledSlots: plan.enabledSlots,
     });
     const top = rankBestDates(summaries, 1, 'smart')[0];
 
@@ -561,9 +586,10 @@ export function createApp(
         : formatDateLong(plan.confirmedDate, lang);
       subtitle = `${dateStr}${plan.confirmedTime ? ` · ${plan.confirmedTime}` : ''}`;
     } else if (top) {
+      const slotPart = top.bestSlot ? ` · ${getSlotMeta(top.bestSlot, lang).label}` : '';
       subtitle = isEn
-        ? `Best day: ${formatDateLong(top.date, lang)} (${top.yes.length}/${participants.length} available)`
-        : `Mejor día: ${formatDateLong(top.date, lang)} (${top.yes.length}/${participants.length} pueden)`;
+        ? `Best day: ${formatDateLong(top.date, lang)}${slotPart} (${top.yes.length}/${participants.length} available)`
+        : `Mejor día: ${formatDateLong(top.date, lang)}${slotPart} (${top.yes.length}/${participants.length} pueden)`;
     }
 
     const svg = buildOgSvg({

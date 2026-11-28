@@ -30,6 +30,7 @@ import {
   formatDateISO,
   formatMonthISO,
   isVotingEffectivelyOpen,
+  normalizeEnabledSlots,
 } from '../../shared/dates.js';
 import {
   computeExpiresAt,
@@ -102,6 +103,12 @@ function parseRequiredIds(value: unknown): string[] {
   return [];
 }
 
+function asGranularity(value: unknown): PlanGranularity {
+  if (value === 'meals') return 'meals';
+  if (value === 'slots') return 'slots';
+  return 'day';
+}
+
 function asPolicy(value: unknown): RetentionPolicy {
   const str = String(value ?? 'ephemeral_after_event');
   if (
@@ -142,6 +149,8 @@ export class PostgresShalendarStore implements ShalendarStore {
   }
 
   private mapPlan(row: Record<string, unknown>): Plan {
+    const granularity = asGranularity(row.granularity);
+    const enabledSlots = normalizeEnabledSlots(granularity, parseRequiredIds(row.enabled_slots));
     return {
       id: String(row.id),
       slug: String(row.slug),
@@ -155,7 +164,8 @@ export class PostgresShalendarStore implements ShalendarStore {
       votingOpen: Boolean(row.voting_open),
       votingDeadline: toIsoOrNull(row.voting_deadline),
       blindVoting: Boolean(row.blind_voting),
-      granularity: (row.granularity === 'slots' ? 'slots' : 'day') as PlanGranularity,
+      granularity,
+      enabledSlots,
       durationDays: Math.max(1, Math.min(7, Number(row.duration_days ?? 1))),
       holidayCountry: String(row.holiday_country ?? 'ES') as HolidayCountry,
       requiredParticipantIds: parseRequiredIds(row.required_participant_ids),
@@ -628,6 +638,9 @@ export class PostgresShalendarStore implements ShalendarStore {
         : null;
     const createdAt = now.toISOString();
 
+    const granularity: PlanGranularity = input.granularity ?? 'day';
+    const enabledSlots = normalizeEnabledSlots(granularity, input.enabledSlots);
+
     const { planRow, participantRow } = await withTransaction(this.pool, async (client) => {
       const pRes = await client.query(
         `
@@ -637,14 +650,14 @@ export class PostgresShalendarStore implements ShalendarStore {
             voting_deadline, blind_voting, granularity, duration_days,
             holiday_country, required_participant_ids, is_demo,
             admin_token_hash, visibility, retention_policy, retention_days,
-            created_at, last_activity_at, expires_at
+            created_at, last_activity_at, expires_at, enabled_slots
           ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, TRUE,
             $10, $11, $12, $13,
             $14, '[]'::jsonb, $15,
             $16, $17, $18, $19,
-            $20::timestamptz, $20::timestamptz, $21::timestamptz
+            $20::timestamptz, $20::timestamptz, $21::timestamptz, $22::jsonb
           )
           RETURNING *
         `,
@@ -660,7 +673,7 @@ export class PostgresShalendarStore implements ShalendarStore {
           input.maxVotesPerUser ?? 3,
           input.votingDeadline ?? null,
           Boolean(input.blindVoting),
-          input.granularity ?? 'day',
+          granularity,
           Math.max(1, Math.min(7, input.durationDays ?? 1)),
           input.holidayCountry ?? 'ES',
           isDemo,
@@ -670,6 +683,7 @@ export class PostgresShalendarStore implements ShalendarStore {
           retentionDays,
           createdAt,
           expiresAt,
+          JSON.stringify(enabledSlots),
         ]
       );
 
@@ -1363,8 +1377,17 @@ export class PostgresShalendarStore implements ShalendarStore {
         : toIsoOrNull(row.voting_deadline);
     const nextBlind =
       updates.blindVoting !== undefined ? updates.blindVoting : Boolean(row.blind_voting);
-    const nextGranularity =
-      updates.granularity !== undefined ? updates.granularity : String(row.granularity ?? 'day');
+    const prevGranularity = asGranularity(row.granularity);
+    const nextGranularity: PlanGranularity =
+      updates.granularity !== undefined ? updates.granularity : prevGranularity;
+    const nextEnabledSlots = normalizeEnabledSlots(
+      nextGranularity,
+      updates.enabledSlots !== undefined
+        ? updates.enabledSlots
+        : updates.granularity !== undefined && updates.granularity !== prevGranularity
+          ? undefined
+          : parseRequiredIds(row.enabled_slots)
+    );
     const nextDurationDays =
       updates.durationDays !== undefined
         ? Math.max(1, Math.min(7, updates.durationDays))
@@ -1470,8 +1493,9 @@ export class PostgresShalendarStore implements ShalendarStore {
             confirmed_date = $15, confirmed_end_date = $16, confirmed_time = $17,
             confirmed_duration_minutes = $18, confirmed_timezone = $19,
             retention_policy = $20, retention_days = $21,
-            last_activity_at = $22::timestamptz, expires_at = $23::timestamptz
-        WHERE id = $24
+            last_activity_at = $22::timestamptz, expires_at = $23::timestamptz,
+            enabled_slots = $24::jsonb
+        WHERE id = $25
         RETURNING *
       `,
       [
@@ -1498,6 +1522,7 @@ export class PostgresShalendarStore implements ShalendarStore {
         nextRetentionDays,
         now.toISOString(),
         nextExpiresAt,
+        JSON.stringify(nextEnabledSlots),
         String(row.id),
       ]
     );

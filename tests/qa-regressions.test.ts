@@ -26,6 +26,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('QA regressions: %s', (driver) 
     } else {
       pg = new PGlite();
       await pg.exec(fs.readFileSync(new URL('../server/persistence/migrations/001_initial_schema.sql', import.meta.url), 'utf8'));
+      await pg.exec(fs.readFileSync(new URL('../server/persistence/migrations/002_meal_slots.sql', import.meta.url), 'utf8'));
       const pool: PgPoolLike = {
         async query<T>(sql: string, values?: readonly unknown[]) {
           const result = await pg!.query<T>(sql, values ? [...values] : []);

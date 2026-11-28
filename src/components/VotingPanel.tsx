@@ -25,7 +25,7 @@ import {
   formatDateLong,
   formatDateRange,
   formatDateShortParts,
-  getTimeSlots,
+  getSlotMeta,
   isVotingEffectivelyOpen,
   type RankingSortMode,
 } from '../../shared/dates';
@@ -114,7 +114,6 @@ export function VotingPanel({
     return () => clearInterval(id);
   }, [plan.votingDeadline]);
 
-  const timeSlots = getTimeSlots(language);
   const effectivelyOpen = isVotingEffectivelyOpen(plan);
   const deadlineInfo = plan.votingDeadline ? formatCountdown(plan.votingDeadline, t) : null;
 
@@ -392,7 +391,7 @@ export function VotingPanel({
             const votePct =
               maxVoteCount > 0 ? Math.round((item.votes.length / totalParticipants) * 100) : 0;
             const bestSlotObj = item.bestSlot
-              ? timeSlots.find((s) => s.id === item.bestSlot)
+              ? getSlotMeta(item.bestSlot, language)
               : null;
 
             return (
@@ -532,7 +531,19 @@ export function VotingPanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setConfirmingDate(confirmingDate === item.date ? null : item.date);
+                            if (confirmingDate === item.date) {
+                              setConfirmingDate(null);
+                            } else {
+                              const suggestedSlot =
+                                item.bestSlot ??
+                                (plan.enabledSlots?.length === 1 ? plan.enabledSlots[0] : null);
+                              setConfirmTime(
+                                suggestedSlot
+                                  ? getSlotMeta(suggestedSlot, language).defaultTime
+                                  : '20:30'
+                              );
+                              setConfirmingDate(item.date);
+                            }
                           }}
                           className="text-[11px] font-semibold text-stone-400 hover:text-teal-600 dark:hover:text-teal-300 transition cursor-pointer"
                         >

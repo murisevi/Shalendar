@@ -9,6 +9,7 @@ import type {
   PlanSnapshot,
   RetentionPolicy,
   RsvpStatus,
+  SpecificSlot,
   SubPollCategory,
 } from '../shared/types.js';
 import type { ExportedPlanBackup, PlanSummaryItem } from '../shared/persistence.js';
@@ -38,6 +39,7 @@ export interface CreatePlanInput {
   endMonth?: string;
   maxVotesPerUser?: number;
   granularity?: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
   durationDays?: number;
   votingDeadline?: string | null;
   blindVoting?: boolean;
@@ -60,6 +62,7 @@ export interface UpdatePlanSettingsInput {
   votingDeadline?: string | null;
   blindVoting?: boolean;
   granularity?: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
   durationDays?: number;
   holidayCountry?: HolidayCountry;
   requiredParticipantIds?: string[];

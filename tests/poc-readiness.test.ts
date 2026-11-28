@@ -33,6 +33,12 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('PoC readiness & persistence sa
           'utf8'
         )
       );
+      await pg.exec(
+        fs.readFileSync(
+          new URL('../server/persistence/migrations/002_meal_slots.sql', import.meta.url),
+          'utf8'
+        )
+      );
       // Emulate a real pg.Pool(max=1) checkout lock so concurrent withTransaction calls
       // never interleave BEGIN/COMMIT on PGlite's single underlying connection.
       let lockTail = Promise.resolve();

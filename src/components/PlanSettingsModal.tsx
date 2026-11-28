@@ -20,9 +20,17 @@ import type {
   Plan,
   PlanGranularity,
   RetentionPolicy,
+  SpecificSlot,
   UpdatePlanSettingsRequest,
 } from '../../shared/types';
-import { PLAN_EMOJIS } from '../../shared/dates';
+import {
+  PLAN_EMOJIS,
+  getMealSlots,
+  getPresetSlotIds,
+  getTimeSlots,
+  isSlotGranularity,
+  normalizeEnabledSlots,
+} from '../../shared/dates';
 import { getHolidayCountries } from '../../shared/holidays';
 import { getRemainingDays, getRetentionPresets } from '../../shared/persistence';
 import { buildCoOrganizerUrl } from '../lib/storage';
@@ -68,6 +76,9 @@ export function PlanSettingsModal({
   const [emoji, setEmoji] = useState(plan.emoji);
   const [maxVotesPerUser, setMaxVotesPerUser] = useState(plan.maxVotesPerUser);
   const [granularity, setGranularity] = useState<PlanGranularity>(plan.granularity);
+  const [enabledSlots, setEnabledSlots] = useState<SpecificSlot[]>(
+    normalizeEnabledSlots(plan.granularity, plan.enabledSlots)
+  );
   const [durationDays, setDurationDays] = useState(plan.durationDays);
   const [holidayCountry, setHolidayCountry] = useState<HolidayCountry>(plan.holidayCountry);
   const [blindVoting, setBlindVoting] = useState(plan.blindVoting);
@@ -94,6 +105,7 @@ export function PlanSettingsModal({
     setEmoji(plan.emoji);
     setMaxVotesPerUser(plan.maxVotesPerUser);
     setGranularity(plan.granularity);
+    setEnabledSlots(normalizeEnabledSlots(plan.granularity, plan.enabledSlots));
     setDurationDays(plan.durationDays);
     setHolidayCountry(plan.holidayCountry);
     setBlindVoting(plan.blindVoting);
@@ -108,6 +120,24 @@ export function PlanSettingsModal({
   const coOrgUrl = buildCoOrganizerUrl(plan.slug);
   const holidayCountries = getHolidayCountries(language);
   const retentionPresets = getRetentionPresets(language);
+  const mealSlotOptions = getMealSlots(language);
+  const dayPartSlotOptions = getTimeSlots(language);
+
+  function handleChangeGranularity(next: PlanGranularity) {
+    setGranularity(next);
+    setEnabledSlots(getPresetSlotIds(next));
+  }
+
+  function toggleEnabledSlot(slotId: SpecificSlot) {
+    setEnabledSlots((prev) => {
+      const normalized = normalizeEnabledSlots(granularity, prev);
+      if (normalized.includes(slotId)) {
+        if (normalized.length <= 1) return normalized;
+        return normalized.filter((s) => s !== slotId);
+      }
+      return normalizeEnabledSlots(granularity, [...normalized, slotId]);
+    });
+  }
 
   function toggleRequired(id: string) {
     setRequiredIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -132,6 +162,9 @@ export function PlanSettingsModal({
         emoji,
         maxVotesPerUser,
         granularity,
+        enabledSlots: isSlotGranularity(granularity)
+          ? normalizeEnabledSlots(granularity, enabledSlots)
+          : [],
         durationDays,
         holidayCountry,
         blindVoting,
@@ -251,10 +284,11 @@ export function PlanSettingsModal({
               </label>
               <select
                 value={granularity}
-                onChange={(e) => setGranularity(e.target.value as PlanGranularity)}
+                onChange={(e) => handleChangeGranularity(e.target.value as PlanGranularity)}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold outline-none focus:border-teal-500"
               >
                 <option value="day">{t.settings.granularityDay}</option>
+                <option value="meals">{t.settings.granularityMeals}</option>
                 <option value="slots">{t.settings.granularitySlots}</option>
               </select>
             </div>
@@ -276,6 +310,69 @@ export function PlanSettingsModal({
                 <option value={7}>{t.settings.durationDay(7)}</option>
               </select>
             </div>
+
+            {isSlotGranularity(granularity) && (
+              <div className="sm:col-span-2 rounded-2xl border border-teal-200/80 dark:border-teal-800/50 bg-teal-50/45 dark:bg-teal-950/25 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <span className="text-[11px] font-semibold text-teal-900 dark:text-teal-200">
+                    {t.settings.enabledSlotsLabel}
+                  </span>
+                  {granularity === 'meals' && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEnabledSlots(['lunch', 'dinner'])}
+                        className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
+                          enabledSlots.length === 2 &&
+                          enabledSlots.includes('lunch') &&
+                          enabledSlots.includes('dinner')
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-white/80 dark:bg-slate-900/70 text-teal-700 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800/60'
+                        }`}
+                      >
+                        {t.home.presetLunchDinner}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEnabledSlots(getPresetSlotIds('meals'))}
+                        className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
+                          enabledSlots.length === 4
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-white/80 dark:bg-slate-900/70 text-teal-700 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800/60'
+                        }`}
+                      >
+                        {t.home.presetAll}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={`grid gap-1.5 ${
+                    granularity === 'meals' ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+                  }`}
+                >
+                  {(granularity === 'meals' ? mealSlotOptions : dayPartSlotOptions).map((slot) => {
+                    const active = enabledSlots.includes(slot.id);
+                    return (
+                      <button
+                        key={slot.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => toggleEnabledSlot(slot.id)}
+                        className={`flex items-center justify-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                          active
+                            ? 'border-teal-500 bg-white dark:bg-slate-900 text-teal-800 dark:text-teal-200 shadow-2xs ring-1 ring-teal-500/20'
+                            : 'border-stone-200/80 dark:border-slate-700 bg-white/40 dark:bg-slate-900/35 text-stone-400 dark:text-slate-500 line-through'
+                        }`}
+                      >
+                        <span>{slot.emoji}</span>
+                        <span>{slot.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-stone-600 dark:text-slate-300 mb-1">

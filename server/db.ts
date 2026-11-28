@@ -20,6 +20,7 @@ import type {
   RetentionPolicy,
   RsvpEntry,
   RsvpStatus,
+  SpecificSlot,
   SubPoll,
   SubPollCategory,
   SubPollOption,
@@ -41,6 +42,7 @@ import {
   formatDateISO,
   formatMonthISO,
   isVotingEffectivelyOpen,
+  normalizeEnabledSlots,
 } from '../shared/dates.js';
 
 function safeTimingEqual(a: string, b: string): boolean {
@@ -113,6 +115,7 @@ export class ShalendarDB {
         voting_deadline TEXT,
         blind_voting INTEGER NOT NULL DEFAULT 0,
         granularity TEXT NOT NULL DEFAULT 'day',
+        enabled_slots TEXT NOT NULL DEFAULT '[]',
         duration_days INTEGER NOT NULL DEFAULT 1,
         holiday_country TEXT NOT NULL DEFAULT 'ES',
         required_participant_ids TEXT NOT NULL DEFAULT '[]',
@@ -148,7 +151,7 @@ export class ShalendarDB {
         plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
         participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
         date TEXT NOT NULL,
-        slot TEXT NOT NULL DEFAULT 'all' CHECK(slot IN ('all', 'morning', 'afternoon', 'evening')),
+        slot TEXT NOT NULL DEFAULT 'all' CHECK(slot IN ('all', 'morning', 'afternoon', 'evening', 'breakfast', 'lunch', 'snack', 'dinner')),
         status TEXT NOT NULL CHECK(status IN ('yes', 'maybe', 'no')),
         note TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL,
@@ -262,6 +265,7 @@ export class ShalendarDB {
     this.ensureColumn('plans', 'voting_deadline', 'TEXT');
     this.ensureColumn('plans', 'blind_voting', 'INTEGER NOT NULL DEFAULT 0');
     this.ensureColumn('plans', 'granularity', "TEXT NOT NULL DEFAULT 'day'");
+    this.ensureColumn('plans', 'enabled_slots', "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn('plans', 'duration_days', 'INTEGER NOT NULL DEFAULT 1');
     this.ensureColumn('plans', 'holiday_country', "TEXT NOT NULL DEFAULT 'ES'");
     this.ensureColumn('plans', 'required_participant_ids', "TEXT NOT NULL DEFAULT '[]'");
@@ -291,26 +295,31 @@ export class ShalendarDB {
     // Mark demo slug if already existing from v1
     this.db.prepare("UPDATE plans SET is_demo = 1 WHERE slug = 'cena-reencuentro'").run();
 
-    // Migrate legacy availabilities table lacking 'slot' PK
+    // Migrate legacy availabilities table lacking 'slot' PK or meal-slot CHECK constraint
     const availCols = this.getColumnNames('availabilities');
-    if (!availCols.has('slot')) {
+    const availTableSqlRow = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'availabilities'")
+      .get() as { sql?: string } | undefined;
+    const availSql = String(availTableSqlRow?.sql ?? '');
+    if (!availCols.has('slot') || !availSql.includes('dinner')) {
+      const slotSelect = availCols.has('slot') ? 'slot' : "'all'";
       this.db.exec('BEGIN');
       try {
         this.db.exec(`
-          CREATE TABLE availabilities_v2 (
+          CREATE TABLE availabilities_v3 (
             plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
             participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
             date TEXT NOT NULL,
-            slot TEXT NOT NULL DEFAULT 'all' CHECK(slot IN ('all', 'morning', 'afternoon', 'evening')),
+            slot TEXT NOT NULL DEFAULT 'all' CHECK(slot IN ('all', 'morning', 'afternoon', 'evening', 'breakfast', 'lunch', 'snack', 'dinner')),
             status TEXT NOT NULL CHECK(status IN ('yes', 'maybe', 'no')),
             note TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (plan_id, participant_id, date, slot)
           );
-          INSERT INTO availabilities_v2 (plan_id, participant_id, date, slot, status, note, updated_at)
-          SELECT plan_id, participant_id, date, 'all', status, note, updated_at FROM availabilities;
+          INSERT INTO availabilities_v3 (plan_id, participant_id, date, slot, status, note, updated_at)
+          SELECT plan_id, participant_id, date, ${slotSelect}, status, note, updated_at FROM availabilities;
           DROP TABLE availabilities;
-          ALTER TABLE availabilities_v2 RENAME TO availabilities;
+          ALTER TABLE availabilities_v3 RENAME TO availabilities;
           CREATE INDEX IF NOT EXISTS idx_avail_plan ON availabilities(plan_id);
         `);
         this.db.exec('COMMIT');
@@ -355,6 +364,17 @@ export class ShalendarDB {
       requiredIds = [];
     }
 
+    let rawEnabledSlots: string[] = [];
+    try {
+      const parsed = JSON.parse(String(row.enabled_slots ?? '[]'));
+      if (Array.isArray(parsed)) rawEnabledSlots = parsed.map(String);
+    } catch {
+      rawEnabledSlots = [];
+    }
+    const granularity: PlanGranularity =
+      row.granularity === 'meals' ? 'meals' : row.granularity === 'slots' ? 'slots' : 'day';
+    const enabledSlots = normalizeEnabledSlots(granularity, rawEnabledSlots);
+
     return {
       id: String(row.id),
       slug: String(row.slug),
@@ -368,7 +388,8 @@ export class ShalendarDB {
       votingOpen: Number(row.voting_open) === 1,
       votingDeadline: row.voting_deadline ? String(row.voting_deadline) : null,
       blindVoting: Number(row.blind_voting ?? 0) === 1,
-      granularity: (row.granularity === 'slots' ? 'slots' : 'day') as PlanGranularity,
+      granularity,
+      enabledSlots,
       durationDays: Math.max(1, Math.min(7, Number(row.duration_days ?? 1))),
       holidayCountry: String(row.holiday_country ?? 'ES') as HolidayCountry,
       requiredParticipantIds: requiredIds,
@@ -776,6 +797,7 @@ export class ShalendarDB {
     endMonth?: string;
     maxVotesPerUser?: number;
     granularity?: PlanGranularity;
+    enabledSlots?: SpecificSlot[];
     durationDays?: number;
     votingDeadline?: string | null;
     blindVoting?: boolean;
@@ -814,16 +836,19 @@ export class ShalendarDB {
           postEventGraceDays: this.postEventGraceDays,
         });
 
+    const granularity: PlanGranularity = input.granularity ?? 'day';
+    const enabledSlots = normalizeEnabledSlots(granularity, input.enabledSlots);
+
     this.db
       .prepare(`
         INSERT INTO plans (
           id, slug, title, description, location, emoji,
           start_month, end_month, max_votes_per_user, voting_open,
-          voting_deadline, blind_voting, granularity, duration_days,
+          voting_deadline, blind_voting, granularity, enabled_slots, duration_days,
           holiday_country, required_participant_ids, is_demo,
           visibility, retention_policy, retention_days, last_activity_at, expires_at,
           admin_token, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -837,7 +862,8 @@ export class ShalendarDB {
         input.maxVotesPerUser ?? 3,
         input.votingDeadline ?? null,
         input.blindVoting ? 1 : 0,
-        input.granularity ?? 'day',
+        granularity,
+        JSON.stringify(enabledSlots),
         Math.max(1, Math.min(7, input.durationDays ?? 1)),
         input.holidayCountry ?? 'ES',
         isDemo ? 1 : 0,
@@ -1439,6 +1465,7 @@ export class ShalendarDB {
       votingDeadline?: string | null;
       blindVoting?: boolean;
       granularity?: PlanGranularity;
+      enabledSlots?: SpecificSlot[];
       durationDays?: number;
       holidayCountry?: HolidayCountry;
       requiredParticipantIds?: string[];
@@ -1474,8 +1501,25 @@ export class ShalendarDB {
           : null;
     const nextBlind =
       updates.blindVoting !== undefined ? (updates.blindVoting ? 1 : 0) : Number(row.blind_voting ?? 0);
-    const nextGranularity =
-      updates.granularity !== undefined ? updates.granularity : String(row.granularity ?? 'day');
+    const prevGranularity: PlanGranularity =
+      row.granularity === 'meals' ? 'meals' : row.granularity === 'slots' ? 'slots' : 'day';
+    const nextGranularity: PlanGranularity =
+      updates.granularity !== undefined ? updates.granularity : prevGranularity;
+    let existingEnabledSlots: string[] = [];
+    try {
+      const parsed = JSON.parse(String(row.enabled_slots ?? '[]'));
+      if (Array.isArray(parsed)) existingEnabledSlots = parsed.map(String);
+    } catch {
+      existingEnabledSlots = [];
+    }
+    const nextEnabledSlots = normalizeEnabledSlots(
+      nextGranularity,
+      updates.enabledSlots !== undefined
+        ? updates.enabledSlots
+        : updates.granularity !== undefined && updates.granularity !== prevGranularity
+          ? undefined
+          : existingEnabledSlots
+    );
     const nextDurationDays =
       updates.durationDays !== undefined
         ? Math.max(1, Math.min(7, updates.durationDays))
@@ -1573,7 +1617,7 @@ export class ShalendarDB {
         UPDATE plans
         SET title = ?, description = ?, location = ?, emoji = ?,
             start_month = ?, end_month = ?, max_votes_per_user = ?, voting_open = ?,
-            voting_deadline = ?, blind_voting = ?, granularity = ?, duration_days = ?,
+            voting_deadline = ?, blind_voting = ?, granularity = ?, enabled_slots = ?, duration_days = ?,
             holiday_country = ?, required_participant_ids = ?,
             confirmed_date = ?, confirmed_end_date = ?, confirmed_time = ?,
             confirmed_duration_minutes = ?, confirmed_timezone = ?,
@@ -1592,6 +1636,7 @@ export class ShalendarDB {
         nextDeadline,
         nextBlind,
         nextGranularity,
+        JSON.stringify(nextEnabledSlots),
         nextDurationDays,
         nextHolidayCountry,
         nextRequiredIds,

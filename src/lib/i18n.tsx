@@ -64,7 +64,12 @@ export interface Translations {
     descriptionPlaceholder: string;
     calendarModeLabel: string;
     modeDays: string;
+    modeMeals: string;
     modeSlots: string;
+    selectMealsHint: string;
+    selectSlotsHint: string;
+    presetLunchDinner: string;
+    presetAll: string;
     durationLabel: string;
     durationOptions: {
       1: string;
@@ -194,7 +199,11 @@ export interface Translations {
     viewOnlyMine: string;
     viewGroupAndMine: string;
     slotToPaint: string;
+    slotFilterLabel: string;
+    allSlotsBest: string;
     allDaySlots: string;
+    allActiveSlots: (shortJoined: string) => string;
+    slotBannerSingle: (emoji: string, label: string, hint: string) => string;
     tipInspect: string;
     tipDrag: string;
     markWeekends: string;
@@ -237,6 +246,10 @@ export interface Translations {
     yesBtn: string;
     maybeBtn: string;
     noBtn: string;
+    markAllSlotsLabel: string;
+    markSlotLabel: (emoji: string, label: string) => string;
+    slotTapHint: string;
+    whoCanMakeSlot: (label: string) => string;
     youYes: string;
     youMaybe: string;
     youNo: string;
@@ -302,6 +315,7 @@ export interface Translations {
     friendHeader: string;
     clickToToggleTitle: string;
     totalAndVotes: string;
+    slotFilterBest: string;
   };
   rsvp: {
     title: string;
@@ -405,7 +419,9 @@ export interface Translations {
     fieldDescription: string;
     fieldGranularity: string;
     granularityDay: string;
+    granularityMeals: string;
     granularitySlots: string;
+    enabledSlotsLabel: string;
     fieldDuration: string;
     durationDay: (days: number) => string;
     fieldMaxVotes: string;
@@ -577,9 +593,14 @@ const ES: Translations = {
     descriptionLabel: 'Descripción o detalles para el grupo',
     descriptionPlaceholder:
       'Ej: Apuntad los días que tenéis libres este mes y votad vuestro favorito.',
-    calendarModeLabel: 'Modo de calendario',
-    modeDays: 'Días',
+    calendarModeLabel: '¿Qué vais a elegir?',
+    modeDays: 'Día completo',
+    modeMeals: 'Comidas',
     modeSlots: 'M / T / N',
+    selectMealsHint: 'Elige qué comidas queréis incluir:',
+    selectSlotsHint: 'Elige qué franjas queréis incluir:',
+    presetLunchDinner: 'Solo comida y cena',
+    presetAll: 'Todas',
     durationLabel: 'Duración del plan',
     durationOptions: {
       1: '1 día (quedada puntual)',
@@ -713,7 +734,11 @@ const ES: Translations = {
     viewOnlyMine: 'Vista: Solo mis días',
     viewGroupAndMine: 'Vista: Grupo + míos',
     slotToPaint: 'Franja a pintar:',
-    allDaySlots: 'Todo el día (M+T+N)',
+    slotFilterLabel: 'Momento:',
+    allSlotsBest: 'Mejor momento',
+    allDaySlots: 'Todo el día',
+    allActiveSlots: (shortJoined) => `Todo (${shortJoined})`,
+    slotBannerSingle: (emoji, label, hint) => `${emoji} Quedada de ${label} (${hint})`,
     tipInspect: 'Haz clic en cualquier día para ver quién puede ir y sus notas.',
     tipDrag: 'Arrastra sobre los días (o pulsa L–D arriba) para pintar rápido.',
     markWeekends: 'Marcar findes (V-D)',
@@ -751,6 +776,10 @@ const ES: Translations = {
     yesBtn: 'Puedo',
     maybeBtn: 'Quizá',
     noBtn: 'No puedo',
+    markAllSlotsLabel: 'Marcar todo el día a la vez:',
+    markSlotLabel: (emoji, label) => `${emoji} Tu disponibilidad (${label}):`,
+    slotTapHint: 'Toca cada opción para elegir: Sí → Quizá → No',
+    whoCanMakeSlot: (label) => `Quién puede · ${label}`,
     youYes: 'Tú: Sí',
     youMaybe: 'Tú: Quizá',
     youNo: 'Tú: No',
@@ -823,6 +852,7 @@ const ES: Translations = {
     friendHeader: 'Amigo',
     clickToToggleTitle: 'Haz clic para cambiar tu disponibilidad',
     totalAndVotes: 'Total & Votos',
+    slotFilterBest: 'Mejor momento',
   },
   rsvp: {
     title: 'Confirmación final de asistencia (RSVP)',
@@ -935,7 +965,9 @@ const ES: Translations = {
     fieldDescription: 'Descripción',
     fieldGranularity: 'Modo de disponibilidad',
     granularityDay: 'Días completos',
+    granularityMeals: 'Comidas (Desayuno / Comida / Merienda / Cena)',
     granularitySlots: 'Franjas (Mañana / Tarde / Noche)',
+    enabledSlotsLabel: 'Opciones activas en este plan',
     fieldDuration: 'Duración (búsqueda multi-día)',
     durationDay: (days) => (days === 1 ? '1 día' : `${days} días consecutivos`),
     fieldMaxVotes: 'Máximo votos por persona (0 = sin límite)',
@@ -1115,9 +1147,14 @@ const EN: Translations = {
     descriptionLabel: 'Description or details for the group',
     descriptionPlaceholder:
       'e.g. Mark the days you are free this month and vote for your favorite.',
-    calendarModeLabel: 'Calendar mode',
-    modeDays: 'Days',
+    calendarModeLabel: 'What are you picking?',
+    modeDays: 'Full day',
+    modeMeals: 'Meals',
     modeSlots: 'M / A / E',
+    selectMealsHint: 'Choose which meals to include:',
+    selectSlotsHint: 'Choose which time slots to include:',
+    presetLunchDinner: 'Lunch & dinner only',
+    presetAll: 'All',
     durationLabel: 'Plan duration',
     durationOptions: {
       1: '1 day (single hangout)',
@@ -1251,7 +1288,11 @@ const EN: Translations = {
     viewOnlyMine: 'View: Only my days',
     viewGroupAndMine: 'View: Group + mine',
     slotToPaint: 'Time slot:',
-    allDaySlots: 'All day (M+A+E)',
+    slotFilterLabel: 'Moment:',
+    allSlotsBest: 'Best match',
+    allDaySlots: 'All day',
+    allActiveSlots: (shortJoined) => `All (${shortJoined})`,
+    slotBannerSingle: (emoji, label, hint) => `${emoji} ${label} plan (${hint})`,
     tipInspect: 'Click any day to see who can make it and read notes.',
     tipDrag: 'Drag across days (or click M–S above) to paint quickly.',
     markWeekends: 'Mark weekends (F–S)',
@@ -1289,6 +1330,10 @@ const EN: Translations = {
     yesBtn: 'Available',
     maybeBtn: 'Maybe',
     noBtn: 'Busy',
+    markAllSlotsLabel: 'Set all slots for this day:',
+    markSlotLabel: (emoji, label) => `${emoji} Your availability (${label}):`,
+    slotTapHint: 'Tap each option to cycle: Yes → Maybe → No',
+    whoCanMakeSlot: (label) => `Who's free · ${label}`,
     youYes: 'You: Yes',
     youMaybe: 'You: Maybe',
     youNo: 'You: No',
@@ -1361,6 +1406,7 @@ const EN: Translations = {
     friendHeader: 'Friend',
     clickToToggleTitle: 'Click to change your availability',
     totalAndVotes: 'Total & Votes',
+    slotFilterBest: 'Best match',
   },
   rsvp: {
     title: 'Final attendance confirmation (RSVP)',
@@ -1472,7 +1518,9 @@ const EN: Translations = {
     fieldDescription: 'Description',
     fieldGranularity: 'Availability mode',
     granularityDay: 'Full days',
+    granularityMeals: 'Meals (Breakfast / Lunch / Snack / Dinner)',
     granularitySlots: 'Time slots (Morning / Afternoon / Evening)',
+    enabledSlotsLabel: 'Active options in this plan',
     fieldDuration: 'Duration (multi-day finder)',
     durationDay: (days) => (days === 1 ? '1 day' : `${days} consecutive days`),
     fieldMaxVotes: 'Max votes per person (0 = unlimited)',

@@ -1,17 +1,28 @@
+import { useMemo, useState } from 'react';
 import { Check, Crown, HelpCircle, Minus, Star, X } from 'lucide-react';
 import type {
   AvailabilityEntry,
+  AvailabilitySlot,
   AvailabilityStatus,
   DaySummary,
   Participant,
+  PlanGranularity,
+  SpecificSlot,
 } from '../../shared/types';
-import { formatDateShortParts } from '../../shared/dates';
+import {
+  formatDateShortParts,
+  getPlanTimeSlots,
+  getSlotMeta,
+  isSlotGranularity,
+} from '../../shared/dates';
 import { useI18n } from '../lib/i18n';
 import { Avatar } from './Avatar';
 
 interface ComparisonMatrixProps {
   participants: Participant[];
   me: Participant | null;
+  granularity?: PlanGranularity;
+  enabledSlots?: SpecificSlot[];
   onlineParticipantIds: Set<string>;
   requiredParticipantIds: string[];
   availabilities: AvailabilityEntry[];
@@ -23,6 +34,11 @@ interface ComparisonMatrixProps {
   onSelectDate: (date: string) => void;
   onToggleVote: (date: string) => void;
   onCycleMyStatus: (date: string, nextStatus: AvailabilityStatus | null) => void;
+  onCycleMySlotStatus?: (
+    date: string,
+    slot: SpecificSlot,
+    nextStatus: AvailabilityStatus | null
+  ) => void;
   myVotedDates: Set<string>;
 }
 
@@ -31,6 +47,8 @@ const CYCLE_ORDER: Array<AvailabilityStatus | null> = ['yes', 'maybe', 'no', nul
 export function ComparisonMatrix({
   participants,
   me,
+  granularity = 'day',
+  enabledSlots,
   onlineParticipantIds,
   requiredParticipantIds,
   availabilities,
@@ -42,23 +60,64 @@ export function ComparisonMatrix({
   onSelectDate,
   onToggleVote,
   onCycleMyStatus,
+  onCycleMySlotStatus,
   myVotedDates,
 }: ComparisonMatrixProps) {
   const { language, t } = useI18n();
+  const useSlots = isSlotGranularity(granularity);
+  const planSlots = useMemo(
+    () => getPlanTimeSlots(granularity, enabledSlots, language),
+    [granularity, enabledSlots, language]
+  );
+  const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot>('all');
+  const activeSlot: AvailabilitySlot = !useSlots
+    ? 'all'
+    : planSlots.length === 1
+      ? planSlots[0].id
+      : selectedSlot !== 'all' && planSlots.some((s) => s.id === selectedSlot)
+        ? selectedSlot
+        : 'all';
+
   const columns = rankedDates.slice(0, 10);
   const requiredSet = new Set(requiredParticipantIds);
 
-  // Aggregate status & notes per (participant, date)
+  // Lookup per (participant, date, slot) plus day aggregate across active slots
   const statusRank = { yes: 3, maybe: 2, no: 1 } as const;
-  const availLookup = new Map<string, { status: AvailabilityStatus; note: string }>();
+  const enabledSlotSet = new Set<string>(planSlots.map((s) => s.id));
+  const availBySlot = new Map<string, { status: AvailabilityStatus; note: string }>();
+  const availAggregate = new Map<string, { status: AvailabilityStatus; note: string }>();
   for (const a of availabilities) {
+    const slot = a.slot || 'all';
+    availBySlot.set(`${a.participantId}:${a.date}:${slot}`, { status: a.status, note: a.note });
+
+    if (useSlots && slot !== 'all' && !enabledSlotSet.has(slot)) continue;
     const key = `${a.participantId}:${a.date}`;
-    const prev = availLookup.get(key);
+    const prev = availAggregate.get(key);
     if (!prev || statusRank[a.status] > statusRank[prev.status]) {
-      availLookup.set(key, { status: a.status, note: a.note || prev?.note || '' });
+      availAggregate.set(key, { status: a.status, note: a.note || prev?.note || '' });
     } else if (a.note && !prev.note) {
-      availLookup.set(key, { ...prev, note: a.note });
+      availAggregate.set(key, { ...prev, note: a.note });
     }
+  }
+
+  function resolveEntry(
+    participantId: string,
+    col: DaySummary,
+    isMeRow: boolean
+  ): { status: AvailabilityStatus; note: string } | undefined {
+    if (useSlots && activeSlot !== 'all') {
+      return (
+        availBySlot.get(`${participantId}:${col.date}:${activeSlot}`) ??
+        availBySlot.get(`${participantId}:${col.date}:all`)
+      );
+    }
+    if (useSlots && !isMeRow && col.bestSlot) {
+      return (
+        availBySlot.get(`${participantId}:${col.date}:${col.bestSlot}`) ??
+        availBySlot.get(`${participantId}:${col.date}:all`)
+      );
+    }
+    return availAggregate.get(`${participantId}:${col.date}`);
   }
 
   if (columns.length === 0 || participants.length === 0) {
@@ -103,6 +162,37 @@ export function ComparisonMatrix({
         </div>
       </div>
 
+      {useSlots && planSlots.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setSelectedSlot('all')}
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
+              activeSlot === 'all'
+                ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+            }`}
+          >
+            ✨ {t.matrix.slotFilterBest}
+          </button>
+          {planSlots.map((slot) => (
+            <button
+              key={slot.id}
+              type="button"
+              onClick={() => setSelectedSlot(slot.id)}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
+                activeSlot === slot.id
+                  ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                  : 'border-stone-200 dark:border-slate-700 text-stone-600 dark:text-slate-300'
+              }`}
+            >
+              <span>{slot.emoji}</span>
+              <span>{slot.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="overflow-x-auto -mx-2 px-2">
         <table className="w-full border-separate border-spacing-1.5 text-left">
           <thead>
@@ -136,6 +226,11 @@ export function ComparisonMatrix({
                       </div>
                       <div className="text-[10px] font-semibold uppercase text-stone-500 dark:text-slate-400">
                         {parts.month}
+                        {useSlots && activeSlot === 'all' && col.bestSlot && (
+                          <span className="ml-0.5" title={getSlotMeta(col.bestSlot, language).label}>
+                            {getSlotMeta(col.bestSlot, language).emoji}
+                          </span>
+                        )}
                       </div>
                     </button>
                   </th>
@@ -175,7 +270,7 @@ export function ComparisonMatrix({
                   </td>
 
                   {columns.map((col) => {
-                    const entry = availLookup.get(`${p.id}:${col.date}`);
+                    const entry = resolveEntry(p.id, col, isMeRow);
                     const st = entry?.status;
                     const note = entry?.note;
                     const cellContent = (
@@ -217,7 +312,14 @@ export function ComparisonMatrix({
                         {isMeRow ? (
                           <button
                             type="button"
-                            onClick={() => onCycleMyStatus(col.date, nextStatusAfter(st))}
+                            onClick={() => {
+                              const nextSt = nextStatusAfter(st);
+                              if (useSlots && activeSlot !== 'all' && onCycleMySlotStatus) {
+                                onCycleMySlotStatus(col.date, activeSlot, nextSt);
+                              } else {
+                                onCycleMyStatus(col.date, nextSt);
+                              }
+                            }}
                             className="w-full"
                           >
                             {cellContent}
@@ -239,11 +341,15 @@ export function ComparisonMatrix({
               </td>
               {columns.map((col) => {
                 const voted = myVotedDates.has(col.date);
+                const colYesCount =
+                  useSlots && activeSlot !== 'all'
+                    ? (col.slots?.[activeSlot]?.yes.length ?? 0)
+                    : col.yes.length;
                 return (
                   <td key={col.date} className="pt-2 text-center">
                     <div className="space-y-1">
                       <div className="text-xs font-extrabold text-teal-700 dark:text-teal-300 tabular-nums">
-                        {col.yes.length}/{participants.length}
+                        {colYesCount}/{participants.length}
                       </div>
                       <button
                         type="button"

@@ -19,10 +19,20 @@ import {
   AVATAR_EMOJIS,
   PLAN_EMOJIS,
   formatDateLong,
+  getMealSlots,
+  getPresetSlotIds,
+  getTimeSlots,
+  isSlotGranularity,
+  normalizeEnabledSlots,
 } from '../../shared/dates';
 import { getHolidayCountries } from '../../shared/holidays';
 import { getRemainingDays, getRetentionPresets } from '../../shared/persistence';
-import type { HolidayCountry, PlanGranularity, RetentionPolicy } from '../../shared/types';
+import type {
+  HolidayCountry,
+  PlanGranularity,
+  RetentionPolicy,
+  SpecificSlot,
+} from '../../shared/types';
 import {
   getRecentPlans,
   rememberPlan,
@@ -49,6 +59,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
   const [emoji, setEmoji] = useState('🍕');
   const [maxVotes, setMaxVotes] = useState<number>(3);
   const [granularity, setGranularity] = useState<PlanGranularity>('day');
+  const [enabledSlots, setEnabledSlots] = useState<SpecificSlot[]>([]);
   const [durationDays, setDurationDays] = useState<number>(1);
   const [holidayCountry, setHolidayCountry] = useState<HolidayCountry>('ES');
   const [blindVoting, setBlindVoting] = useState(false);
@@ -125,6 +136,9 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
         organizerPin: organizerPin.trim() || undefined,
         maxVotesPerUser: maxVotes,
         granularity,
+        enabledSlots: isSlotGranularity(granularity)
+          ? normalizeEnabledSlots(granularity, enabledSlots)
+          : [],
         durationDays,
         holidayCountry,
         blindVoting,
@@ -151,6 +165,24 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
   const demoPlan = demoPlans.find((p) => p.slug === 'cena-reencuentro') ?? demoPlans[0];
   const holidayCountries = getHolidayCountries(language);
   const retentionPresets = getRetentionPresets(language);
+  const mealSlotOptions = getMealSlots(language);
+  const dayPartSlotOptions = getTimeSlots(language);
+
+  function selectGranularity(next: PlanGranularity) {
+    setGranularity(next);
+    setEnabledSlots(getPresetSlotIds(next));
+  }
+
+  function toggleEnabledSlot(slotId: SpecificSlot) {
+    setEnabledSlots((prev) => {
+      const normalized = normalizeEnabledSlots(granularity, prev);
+      if (normalized.includes(slotId)) {
+        if (normalized.length <= 1) return normalized;
+        return normalized.filter((s) => s !== slotId);
+      }
+      return normalizeEnabledSlots(granularity, [...normalized, slotId]);
+    });
+  }
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] dark:bg-[#0E1318] text-stone-900 dark:text-slate-100">
@@ -379,6 +411,101 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                 </div>
               </div>
 
+              {/* Availability Granularity (Days vs Meals vs Morning/Afternoon/Evening) */}
+              <div className="space-y-2">
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-stone-600 dark:text-slate-300">
+                  <Clock className="h-3.5 w-3.5 text-teal-600" />
+                  {t.home.calendarModeLabel}
+                </span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(
+                    [
+                      { id: 'day', emoji: '📅', label: t.home.modeDays },
+                      { id: 'meals', emoji: '🍽️', label: t.home.modeMeals },
+                      { id: 'slots', emoji: '🕒', label: t.home.modeSlots },
+                    ] as const
+                  ).map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      aria-pressed={granularity === g.id}
+                      onClick={() => selectGranularity(g.id)}
+                      className={`inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition cursor-pointer ${
+                        granularity === g.id
+                          ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200 ring-1 ring-teal-500/20'
+                          : 'border-stone-200 dark:border-slate-700 bg-stone-50/70 dark:bg-slate-800/70 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>{g.emoji}</span>
+                      <span className="truncate">{g.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {isSlotGranularity(granularity) && (
+                  <div className="rounded-2xl border border-teal-200/80 dark:border-teal-800/50 bg-teal-50/45 dark:bg-teal-950/25 p-3 space-y-2 animate-pop">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <span className="text-[11px] font-semibold text-teal-900 dark:text-teal-200">
+                        {granularity === 'meals' ? t.home.selectMealsHint : t.home.selectSlotsHint}
+                      </span>
+                      {granularity === 'meals' && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEnabledSlots(['lunch', 'dinner'])}
+                            className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
+                              enabledSlots.length === 2 &&
+                              enabledSlots.includes('lunch') &&
+                              enabledSlots.includes('dinner')
+                                ? 'bg-teal-600 text-white'
+                                : 'bg-white/80 dark:bg-slate-900/70 text-teal-700 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800/60 hover:bg-teal-100/70'
+                            }`}
+                          >
+                            {t.home.presetLunchDinner}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEnabledSlots(getPresetSlotIds('meals'))}
+                            className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
+                              enabledSlots.length === 4
+                                ? 'bg-teal-600 text-white'
+                                : 'bg-white/80 dark:bg-slate-900/70 text-teal-700 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800/60 hover:bg-teal-100/70'
+                            }`}
+                          >
+                            {t.home.presetAll}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      className={`grid gap-1.5 ${
+                        granularity === 'meals' ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+                      }`}
+                    >
+                      {(granularity === 'meals' ? mealSlotOptions : dayPartSlotOptions).map((slot) => {
+                        const active = enabledSlots.includes(slot.id);
+                        return (
+                          <button
+                            key={slot.id}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => toggleEnabledSlot(slot.id)}
+                            className={`flex items-center justify-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                              active
+                                ? 'border-teal-500 bg-white dark:bg-slate-900 text-teal-800 dark:text-teal-200 shadow-2xs ring-1 ring-teal-500/20'
+                                : 'border-stone-200/80 dark:border-slate-700 bg-white/40 dark:bg-slate-900/35 text-stone-400 dark:text-slate-500 line-through'
+                            }`}
+                          >
+                            <span>{slot.emoji}</span>
+                            <span>{slot.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Optional toggle for advanced options */}
               <div>
                 <button
@@ -409,34 +536,8 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                       />
                     </div>
 
-                    {/* Granularity & Multi-day Duration */}
+                    {/* Multi-day Duration & Holidays */}
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <span className="flex items-center gap-1 text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          <Clock className="h-3.5 w-3.5 text-teal-600" />
-                          {t.home.calendarModeLabel}
-                        </span>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {[
-                            { id: 'day' as const, label: t.home.modeDays },
-                            { id: 'slots' as const, label: t.home.modeSlots },
-                          ].map((g) => (
-                            <button
-                              key={g.id}
-                              type="button"
-                              onClick={() => setGranularity(g.id)}
-                              className={`rounded-xl py-2 text-xs font-semibold border transition cursor-pointer ${
-                                granularity === g.id
-                                  ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
-                                  : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
-                              }`}
-                            >
-                              {g.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       <div>
                         <span className="flex items-center gap-1 text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
                           <CalendarRange className="h-3.5 w-3.5 text-teal-600" />
@@ -455,36 +556,6 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                           <option value={7}>{t.home.durationOptions[7]}</option>
                         </select>
                       </div>
-                    </div>
-
-                    {/* Votes & Holidays */}
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <span className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
-                          {t.home.votesPerPersonLabel}
-                        </span>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {[
-                            { value: 1, label: '1' },
-                            { value: 2, label: '2' },
-                            { value: 3, label: '3' },
-                            { value: 0, label: '∞' },
-                          ].map((opt) => (
-                            <button
-                              key={opt.value}
-                              type="button"
-                              onClick={() => setMaxVotes(opt.value)}
-                              className={`rounded-xl py-2 text-xs font-semibold border transition cursor-pointer ${
-                                maxVotes === opt.value
-                                  ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
-                                  : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
 
                       <div>
                         <label className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
@@ -501,6 +572,34 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
                             </option>
                           ))}
                         </select>
+                      </div>
+                    </div>
+
+                    {/* Votes */}
+                    <div>
+                      <span className="block text-xs font-medium text-stone-600 dark:text-slate-300 mb-1.5">
+                        {t.home.votesPerPersonLabel}
+                      </span>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { value: 1, label: '1' },
+                          { value: 2, label: '2' },
+                          { value: 3, label: '3' },
+                          { value: 0, label: '∞' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setMaxVotes(opt.value)}
+                            className={`rounded-xl py-2 text-xs font-semibold border transition cursor-pointer ${
+                              maxVotes === opt.value
+                                ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-200'
+                                : 'border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-stone-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 

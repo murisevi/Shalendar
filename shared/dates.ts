@@ -2,13 +2,16 @@ import type {
   AvailabilityEntry,
   AvailabilityStatus,
   DateRangeSummary,
+  DayPartSlot,
   DaySummary,
   HolidayCountry,
   Language,
+  MealSlot,
   Participant,
   PlanGranularity,
   PollOption,
   SlotDaySummary,
+  SpecificSlot,
   VoteEntry,
 } from './types.js';
 import { getHolidayInfo } from './holidays.js';
@@ -34,26 +37,107 @@ export const PLAN_EMOJIS = [
   '🍕', '🏔️', '🍻', '🏖️', '🎲', '🎬', '☕', '✈️', '🎸', '🍝', '🎉', '🏕️',
 ];
 
-export const TIME_SLOTS: Array<{
-  id: 'morning' | 'afternoon' | 'evening';
+export interface TimeSlotMeta {
+  id: SpecificSlot;
   label: string;
   shortLabel: string;
   emoji: string;
   hint: string;
+  defaultTime: string;
+}
+
+export const DAY_PART_SLOT_IDS: readonly DayPartSlot[] = ['morning', 'afternoon', 'evening'];
+export const MEAL_SLOT_IDS: readonly MealSlot[] = ['breakfast', 'lunch', 'snack', 'dinner'];
+export const ALL_SPECIFIC_SLOT_IDS: readonly SpecificSlot[] = [
+  ...DAY_PART_SLOT_IDS,
+  ...MEAL_SLOT_IDS,
+];
+
+export const TIME_SLOTS: Array<{
+  id: DayPartSlot;
+  label: string;
+  shortLabel: string;
+  emoji: string;
+  hint: string;
+  defaultTime: string;
 }> = [
-  { id: 'morning', label: 'Mañana', shortLabel: 'M', emoji: '☀️', hint: '09:00–14:00' },
-  { id: 'afternoon', label: 'Tarde', shortLabel: 'T', emoji: '🌤️', hint: '14:00–20:00' },
-  { id: 'evening', label: 'Noche', shortLabel: 'N', emoji: '🌙', hint: '20:00+' },
+  { id: 'morning', label: 'Mañana', shortLabel: 'M', emoji: '☀️', hint: '09:00–14:00', defaultTime: '10:30' },
+  { id: 'afternoon', label: 'Tarde', shortLabel: 'T', emoji: '🌤️', hint: '14:00–20:00', defaultTime: '17:00' },
+  { id: 'evening', label: 'Noche', shortLabel: 'N', emoji: '🌙', hint: '20:00+', defaultTime: '21:00' },
 ];
 
 export const TIME_SLOTS_EN: typeof TIME_SLOTS = [
-  { id: 'morning', label: 'Morning', shortLabel: 'M', emoji: '☀️', hint: '09:00–14:00' },
-  { id: 'afternoon', label: 'Afternoon', shortLabel: 'A', emoji: '🌤️', hint: '14:00–20:00' },
-  { id: 'evening', label: 'Evening', shortLabel: 'E', emoji: '🌙', hint: '20:00+' },
+  { id: 'morning', label: 'Morning', shortLabel: 'M', emoji: '☀️', hint: '09:00–14:00', defaultTime: '10:30' },
+  { id: 'afternoon', label: 'Afternoon', shortLabel: 'A', emoji: '🌤️', hint: '14:00–20:00', defaultTime: '17:00' },
+  { id: 'evening', label: 'Evening', shortLabel: 'E', emoji: '🌙', hint: '20:00+', defaultTime: '21:00' },
 ];
+
+export const MEAL_SLOTS: Array<{
+  id: MealSlot;
+  label: string;
+  shortLabel: string;
+  emoji: string;
+  hint: string;
+  defaultTime: string;
+}> = [
+  { id: 'breakfast', label: 'Desayuno', shortLabel: 'D', emoji: '☕', hint: '09:00–11:30', defaultTime: '10:00' },
+  { id: 'lunch', label: 'Comida', shortLabel: 'Co', emoji: '🍽️', hint: '13:30–16:00', defaultTime: '14:00' },
+  { id: 'snack', label: 'Merienda', shortLabel: 'Me', emoji: '🥐', hint: '17:00–19:30', defaultTime: '17:30' },
+  { id: 'dinner', label: 'Cena', shortLabel: 'Ce', emoji: '🍷', hint: '20:30+', defaultTime: '21:00' },
+];
+
+export const MEAL_SLOTS_EN: typeof MEAL_SLOTS = [
+  { id: 'breakfast', label: 'Breakfast', shortLabel: 'B', emoji: '☕', hint: '09:00–11:30', defaultTime: '10:00' },
+  { id: 'lunch', label: 'Lunch', shortLabel: 'L', emoji: '🍽️', hint: '12:30–15:00', defaultTime: '13:30' },
+  { id: 'snack', label: 'Snack', shortLabel: 'S', emoji: '🥐', hint: '16:00–18:30', defaultTime: '17:00' },
+  { id: 'dinner', label: 'Dinner', shortLabel: 'D', emoji: '🍷', hint: '20:00+', defaultTime: '20:30' },
+];
+
+export function isSlotGranularity(granularity: PlanGranularity): boolean {
+  return granularity === 'slots' || granularity === 'meals';
+}
+
+export function getPresetSlotIds(granularity: PlanGranularity): SpecificSlot[] {
+  if (granularity === 'meals') return [...MEAL_SLOT_IDS];
+  if (granularity === 'slots') return [...DAY_PART_SLOT_IDS];
+  return [];
+}
+
+export function normalizeEnabledSlots(
+  granularity: PlanGranularity,
+  rawSlots?: readonly string[] | null
+): SpecificSlot[] {
+  const allowed = getPresetSlotIds(granularity);
+  if (allowed.length === 0) return [];
+  if (!rawSlots || rawSlots.length === 0) return allowed;
+  const set = new Set(rawSlots);
+  const filtered = allowed.filter((slot) => set.has(slot));
+  return filtered.length > 0 ? filtered : allowed;
+}
 
 export function getTimeSlots(lang: Language = 'es') {
   return lang === 'en' ? TIME_SLOTS_EN : TIME_SLOTS;
+}
+
+export function getMealSlots(lang: Language = 'es') {
+  return lang === 'en' ? MEAL_SLOTS_EN : MEAL_SLOTS;
+}
+
+export function getSlotMeta(slot: SpecificSlot, lang: Language = 'es'): TimeSlotMeta {
+  const all: TimeSlotMeta[] = [
+    ...(lang === 'en' ? TIME_SLOTS_EN : TIME_SLOTS),
+    ...(lang === 'en' ? MEAL_SLOTS_EN : MEAL_SLOTS),
+  ];
+  return all.find((s) => s.id === slot) ?? all[0];
+}
+
+export function getPlanTimeSlots(
+  granularity: PlanGranularity,
+  enabledSlots?: readonly SpecificSlot[] | null,
+  lang: Language = 'es'
+): TimeSlotMeta[] {
+  const ids = normalizeEnabledSlots(granularity, enabledSlots);
+  return ids.map((id) => getSlotMeta(id, lang));
 }
 
 export const WEEKDAYS_SHORT_ES = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
@@ -330,26 +414,20 @@ export function isVotingEffectivelyOpen(plan: {
 }
 
 /**
- * Resolves a participant's effective day-level status when granularity is 'slots' or 'day'.
+ * Resolves a participant's status for whole-day mode.
  */
-function resolveDayStatus(
-  entries: AvailabilityEntry[] | undefined,
-  granularity: PlanGranularity
+function resolveWholeDayStatus(
+  entries: AvailabilityEntry[] | undefined
 ): AvailabilityStatus | null {
   if (!entries || entries.length === 0) return null;
-  if (granularity === 'day') {
-    const allEntry = entries.find((e) => e.slot === 'all') ?? entries[0];
-    return allEntry?.status ?? null;
-  }
-  // In slots mode: if any slot is 'yes' -> 'yes'; else if any 'maybe' -> 'maybe'; else if any 'no' -> 'no'
-  if (entries.some((e) => e.status === 'yes')) return 'yes';
-  if (entries.some((e) => e.status === 'maybe')) return 'maybe';
-  if (entries.some((e) => e.status === 'no')) return 'no';
-  return null;
+  const allEntry = entries.find((e) => e.slot === 'all') ?? entries[0];
+  return allEntry?.status ?? null;
 }
 
 /**
  * Computes rich per-day availability, slot summaries, notes, required-attendee checks, and votes.
+ * In slot modes ('slots' or 'meals'), day-level overlap uses the best matching enabled slot
+ * (or `slotFilter` when specified) so two friends available in disjoint slots never create a false 2/2 match.
  */
 export function computeDaySummaries(params: {
   participants: Participant[];
@@ -359,6 +437,8 @@ export function computeDaySummaries(params: {
   filterParticipantIds?: string[];
   requiredParticipantIds?: string[];
   granularity?: PlanGranularity;
+  enabledSlots?: readonly SpecificSlot[] | null;
+  slotFilter?: SpecificSlot | null;
   extraDates?: string[];
 }): Map<string, DaySummary> {
   const {
@@ -369,6 +449,8 @@ export function computeDaySummaries(params: {
     filterParticipantIds = [],
     requiredParticipantIds = [],
     granularity = 'day',
+    enabledSlots = null,
+    slotFilter = null,
     extraDates = [],
   } = params;
 
@@ -382,6 +464,10 @@ export function computeDaySummaries(params: {
   const pollOptionByDate = new Map(pollOptions.map((o) => [o.date, o]));
 
   const validRequiredIds = requiredParticipantIds.filter((id) => participantById.has(id));
+  const useSlots = isSlotGranularity(granularity);
+  const planSlotIds = useSlots ? normalizeEnabledSlots(granularity, enabledSlots) : [];
+  const activeSlotFilter =
+    useSlots && slotFilter && planSlotIds.includes(slotFilter) ? slotFilter : null;
 
   const allDates = new Set<string>(extraDates);
   for (const a of availabilities) allDates.add(a.date);
@@ -414,10 +500,6 @@ export function computeDaySummaries(params: {
 
   for (const date of allDates) {
     const byPart = availByDate.get(date);
-    const yes: Participant[] = [];
-    const maybe: Participant[] = [];
-    const no: Participant[] = [];
-    const pending: Participant[] = [];
     const notesByParticipant: Record<string, string> = {};
 
     // Collect notes across all participants on this day
@@ -428,9 +510,139 @@ export function computeDaySummaries(params: {
       }
     }
 
+    if (useSlots) {
+      const slotMap: Partial<Record<SpecificSlot, SlotDaySummary>> = {};
+      let bestSlot: SpecificSlot | null = null;
+      let bestSummary: SlotDaySummary | null = null;
+
+      for (const slotKey of planSlotIds) {
+        const sYes: Participant[] = [];
+        const sMaybe: Participant[] = [];
+        const sNo: Participant[] = [];
+        const sPending: Participant[] = [];
+
+        for (const p of activeParticipants) {
+          const entries = byPart?.get(p.id) ?? [];
+          const match = entries.find((e) => e.slot === slotKey) ?? entries.find((e) => e.slot === 'all');
+          if (match?.status === 'yes') sYes.push(p);
+          else if (match?.status === 'maybe') sMaybe.push(p);
+          else if (match?.status === 'no') sNo.push(p);
+          else sPending.push(p);
+        }
+
+        let sAllRequiredAvailable = true;
+        if (validRequiredIds.length > 0) {
+          for (const reqId of validRequiredIds) {
+            const entries = byPart?.get(reqId) ?? [];
+            const match = entries.find((e) => e.slot === slotKey) ?? entries.find((e) => e.slot === 'all');
+            if (match?.status !== 'yes') {
+              sAllRequiredAvailable = false;
+              break;
+            }
+          }
+        }
+
+        const sScore = sYes.length + sMaybe.length * 0.45;
+        const sRatio = activeParticipants.length > 0 ? Math.min(1, sScore / denom) : 0;
+        const slotSummary: SlotDaySummary = {
+          slot: slotKey,
+          yes: sYes,
+          maybe: sMaybe,
+          no: sNo,
+          pending: sPending,
+          score: sScore,
+          ratio: sRatio,
+          allRequiredAvailable: sAllRequiredAvailable,
+        };
+        slotMap[slotKey] = slotSummary;
+
+        if (sScore > 0) {
+          const isBetter =
+            !bestSummary ||
+            (validRequiredIds.length > 0 &&
+              slotSummary.allRequiredAvailable !== bestSummary.allRequiredAvailable &&
+              slotSummary.allRequiredAvailable) ||
+            ((validRequiredIds.length === 0 ||
+              slotSummary.allRequiredAvailable === bestSummary.allRequiredAvailable) &&
+              (slotSummary.score > bestSummary.score + 0.001 ||
+                (Math.abs(slotSummary.score - bestSummary.score) <= 0.001 &&
+                  (slotSummary.yes.length > bestSummary.yes.length ||
+                    (slotSummary.yes.length === bestSummary.yes.length &&
+                      slotSummary.no.length < bestSummary.no.length)))));
+          if (isBetter) {
+            bestSlot = slotKey;
+            bestSummary = slotSummary;
+          }
+        }
+      }
+
+      const chosen = activeSlotFilter ? slotMap[activeSlotFilter] ?? null : bestSummary;
+      let yes: Participant[];
+      let maybe: Participant[];
+      let no: Participant[];
+      let pending: Participant[];
+      let score: number;
+      let ratio: number;
+      let allRequiredAvailable: boolean;
+
+      if (chosen) {
+        yes = chosen.yes;
+        maybe = chosen.maybe;
+        no = chosen.no;
+        pending = chosen.pending;
+        score = chosen.score;
+        ratio = chosen.ratio;
+        allRequiredAvailable = chosen.allRequiredAvailable;
+      } else {
+        yes = [];
+        maybe = [];
+        no = [];
+        pending = [];
+        for (const p of activeParticipants) {
+          const entries = byPart?.get(p.id) ?? [];
+          const hasNo = planSlotIds.some((slotKey) => {
+            const match = entries.find((e) => e.slot === slotKey) ?? entries.find((e) => e.slot === 'all');
+            return match?.status === 'no';
+          });
+          if (hasNo) no.push(p);
+          else pending.push(p);
+        }
+        score = 0;
+        ratio = 0;
+        allRequiredAvailable = validRequiredIds.length === 0;
+      }
+
+      const allFilteredAvailable =
+        activeIds.size > 0 && yes.length === activeParticipants.length;
+
+      result.set(date, {
+        date,
+        yes,
+        maybe,
+        no,
+        pending,
+        votes: votesByDate.get(date) ?? [],
+        pollOption: pollOptionByDate.get(date) ?? null,
+        score,
+        ratio,
+        allFilteredAvailable,
+        allRequiredAvailable,
+        notesByParticipant,
+        hasNotes: Object.keys(notesByParticipant).length > 0,
+        slots: slotMap,
+        bestSlot: activeSlotFilter ?? bestSlot,
+      });
+      continue;
+    }
+
+    // Whole-day mode ('day')
+    const yes: Participant[] = [];
+    const maybe: Participant[] = [];
+    const no: Participant[] = [];
+    const pending: Participant[] = [];
+
     for (const p of activeParticipants) {
-      const entries = byPart?.get(p.id);
-      const effective = resolveDayStatus(entries, granularity);
+      const effective = resolveWholeDayStatus(byPart?.get(p.id));
       if (!effective) {
         pending.push(p);
       } else if (effective === 'yes') {
@@ -446,42 +658,12 @@ export function computeDaySummaries(params: {
     let allRequiredAvailable = true;
     if (validRequiredIds.length > 0) {
       for (const reqId of validRequiredIds) {
-        const st = resolveDayStatus(byPart?.get(reqId), granularity);
+        const st = resolveWholeDayStatus(byPart?.get(reqId));
         if (st !== 'yes') {
           allRequiredAvailable = false;
           break;
         }
       }
-    }
-
-    // Optional slot-level breakdown
-    let slots: Record<'morning' | 'afternoon' | 'evening', SlotDaySummary> | undefined;
-    let bestSlot: 'morning' | 'afternoon' | 'evening' | null = null;
-    if (granularity === 'slots') {
-      const slotKeys: Array<'morning' | 'afternoon' | 'evening'> = ['morning', 'afternoon', 'evening'];
-      const slotMap = {} as Record<'morning' | 'afternoon' | 'evening', SlotDaySummary>;
-      let topSlotScore = 0;
-
-      for (const slotKey of slotKeys) {
-        const sYes: Participant[] = [];
-        const sMaybe: Participant[] = [];
-        const sNo: Participant[] = [];
-        for (const p of activeParticipants) {
-          const entries = byPart?.get(p.id) ?? [];
-          const match = entries.find((e) => e.slot === slotKey) ?? entries.find((e) => e.slot === 'all');
-          if (match?.status === 'yes') sYes.push(p);
-          else if (match?.status === 'maybe') sMaybe.push(p);
-          else if (match?.status === 'no') sNo.push(p);
-        }
-        const sScore = sYes.length + sMaybe.length * 0.45;
-        const sRatio = activeParticipants.length > 0 ? Math.min(1, sScore / denom) : 0;
-        slotMap[slotKey] = { slot: slotKey, yes: sYes, maybe: sMaybe, no: sNo, score: sScore, ratio: sRatio };
-        if (sScore > topSlotScore) {
-          topSlotScore = sScore;
-          bestSlot = slotKey;
-        }
-      }
-      slots = slotMap;
     }
 
     const score = yes.length + maybe.length * 0.45;
@@ -503,7 +685,6 @@ export function computeDaySummaries(params: {
       allRequiredAvailable,
       notesByParticipant,
       hasNotes: Object.keys(notesByParticipant).length > 0,
-      ...(slots ? { slots, bestSlot } : {}),
     });
   }
 

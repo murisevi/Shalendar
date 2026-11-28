@@ -47,7 +47,9 @@ import {
   formatDateISO,
   formatDateRange,
   formatDateShortParts,
+  isSlotGranularity,
   isVotingEffectivelyOpen,
+  normalizeEnabledSlots,
   rankBestDates,
   rankBestRanges,
   type RankingSortMode,
@@ -118,6 +120,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     formatDateISO(new Date()).slice(0, 7)
   );
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [activeSlot, setActiveSlot] = useState<AvailabilitySlot>('all');
   const [hoveredRangeDates, setHoveredRangeDates] = useState<string[] | null>(null);
   const [filterParticipantIds, setFilterParticipantIds] = useState<string[]>([]);
 
@@ -251,6 +254,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           votes: data.votes,
           pollOptions: data.pollOptions,
           granularity: data.plan.granularity,
+          enabledSlots: data.plan.enabledSlots,
           requiredParticipantIds: data.plan.requiredParticipantIds,
         });
         const top = rankBestDates(
@@ -370,12 +374,17 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     if (!snapshot || !me) {
       return { myAvailabilityMap: dayMap, mySlotAvailabilityMap: slotMap, myNotesByDate: notesMap };
     }
+    const useSlots = isSlotGranularity(snapshot.plan.granularity);
+    const activeSlotsSet = new Set<string>(
+      normalizeEnabledSlots(snapshot.plan.granularity, snapshot.plan.enabledSlots)
+    );
     for (const a of snapshot.availabilities) {
       if (a.participantId !== me.id) continue;
       const slot = a.slot || 'all';
       slotMap.set(`${a.date}:${slot}`, a.status);
       if (a.note) notesMap.set(a.date, a.note);
 
+      if (useSlots && slot !== 'all' && !activeSlotsSet.has(slot)) continue;
       const prev = dayMap.get(a.date);
       if (!prev || statusPriority[a.status] > statusPriority[prev]) {
         dayMap.set(a.date, a.status);
@@ -383,6 +392,14 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
     return { myAvailabilityMap: dayMap, mySlotAvailabilityMap: slotMap, myNotesByDate: notesMap };
   }, [snapshot, me]);
+
+  const effectiveActiveSlot = useMemo<AvailabilitySlot>(() => {
+    if (!snapshot || !isSlotGranularity(snapshot.plan.granularity)) return 'all';
+    const slots = normalizeEnabledSlots(snapshot.plan.granularity, snapshot.plan.enabledSlots);
+    if (slots.length === 1) return slots[0];
+    if (activeSlot !== 'all' && slots.includes(activeSlot)) return activeSlot;
+    return 'all';
+  }, [snapshot, activeSlot]);
 
   const myVotedDates = useMemo(() => {
     const set = new Set<string>();
@@ -403,6 +420,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       filterParticipantIds,
       requiredParticipantIds: snapshot.plan.requiredParticipantIds,
       granularity: snapshot.plan.granularity,
+      enabledSlots: snapshot.plan.enabledSlots,
       extraDates: selectedDate ? [selectedDate] : [],
     });
   }, [snapshot, filterParticipantIds, selectedDate]);
@@ -1102,6 +1120,9 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       participants={participants}
       me={me}
       granularity={plan.granularity}
+      enabledSlots={plan.enabledSlots}
+      activeSlot={effectiveActiveSlot}
+      onChangeActiveSlot={setActiveSlot}
       holidayCountry={plan.holidayCountry}
       requiredParticipantIds={plan.requiredParticipantIds}
       onlineParticipantIds={onlineSet}
@@ -1156,6 +1177,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     <ComparisonMatrix
       participants={participants}
       me={me}
+      granularity={plan.granularity}
+      enabledSlots={plan.enabledSlots}
       onlineParticipantIds={onlineSet}
       requiredParticipantIds={plan.requiredParticipantIds}
       availabilities={availabilities}
@@ -1167,7 +1190,12 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       onSelectDate={onSelect}
       onToggleVote={handleToggleVote}
       onCycleMyStatus={(date, nextStatus) =>
-        handleCommitAvailability(dayAvailabilityChanges(date, nextStatus, plan.granularity))
+        handleCommitAvailability(
+          dayAvailabilityChanges(date, nextStatus, plan.granularity, undefined, plan.enabledSlots)
+        )
+      }
+      onCycleMySlotStatus={(date, slot, nextStatus) =>
+        handleCommitAvailability([{ date, slot, status: nextStatus }])
       }
       myVotedDates={myVotedDates}
     />
@@ -1319,6 +1347,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       participants={participants}
       me={me}
       granularity={plan.granularity}
+      enabledSlots={plan.enabledSlots}
+      preferredSlot={effectiveActiveSlot !== 'all' ? effectiveActiveSlot : null}
       holidayCountry={plan.holidayCountry}
       requiredParticipantIds={plan.requiredParticipantIds}
       myStatus={selectedDate ? myAvailabilityMap.get(selectedDate) : undefined}
@@ -1330,7 +1360,11 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       onSetMyStatus={(d, st, slot = 'all', note) =>
         handleCommitAvailability([{ date: d, slot, status: st, note }])
       }
-      onSetMyDayStatus={(d, st, note) => handleCommitAvailability(dayAvailabilityChanges(d, st, plan.granularity, note))}
+      onSetMyDayStatus={(d, st, note) =>
+        handleCommitAvailability(
+          dayAvailabilityChanges(d, st, plan.granularity, note, plan.enabledSlots)
+        )
+      }
       onSaveMyNote={(d, note) => {
         if (me) handleCommitAvailability(personalNoteChanges(snapshotRef.current?.availabilities ?? [], me.id, d, note));
       }}

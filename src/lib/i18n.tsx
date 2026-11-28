@@ -546,8 +546,8 @@ const ES: Translations = {
   },
   home: {
     viewLiveDemo: 'Ver ejemplo en vivo',
-    heroTitleLead: 'Ponerse de acuerdo para quedar ',
-    heroTitleHighlight: 'por fin es fácil.',
+    heroTitleLead: 'Encontrar un día para quedar ',
+    heroTitleHighlight: 'sin morir en el intento.',
     heroSubtitle:
       'Crea un calendario privado en segundos, pásale el enlace o QR a tus amigos, pintad los días o franjas que podéis, votad fecha y lugar, y organizad coches y tareas sin salir del mismo link.',
     pill1Title: 'Días, franjas y escapadas',

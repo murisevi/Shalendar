@@ -59,6 +59,8 @@ import {
   getAdminToken,
   getParticipantToken,
   getSavedParticipantId,
+  hasSeenPlanIntro,
+  markPlanIntroSeen,
   rememberPlan,
   saveAdminToken,
   saveParticipantId,
@@ -74,6 +76,7 @@ import { VotingPanel } from './VotingPanel';
 import { ComparisonMatrix } from './ComparisonMatrix';
 import { DayInspector } from './DayInspector';
 import { IdentityModal } from './IdentityModal';
+import { PlanIntroModal } from './PlanIntroModal';
 import { ShareModal } from './ShareModal';
 import { PlanSettingsModal } from './PlanSettingsModal';
 import { RsvpPanel } from './RsvpPanel';
@@ -117,6 +120,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   const [filterParticipantIds, setFilterParticipantIds] = useState<string[]>([]);
 
   const [identityModalMode, setIdentityModalMode] = useState<'join' | 'edit' | null>(null);
+  const [introOpen, setIntroOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [generalNote, setGeneralNote] = useState('');
@@ -221,6 +225,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         setSnapshot(data);
         setOnlineIds(data.onlineParticipantIds ?? []);
         setLoading(false);
+        if (!hasSeenPlanIntro()) setIntroOpen(true);
         rememberPlan({
           slug: data.plan.slug,
           title: data.plan.title,
@@ -1246,6 +1251,16 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
 
   const modals = (
     <>
+      {/* First-visit mini tutorial: mark your days, then vote */}
+      <PlanIntroModal
+        open={introOpen}
+        planEmoji={plan.emoji}
+        onClose={() => {
+          markPlanIntroSeen();
+          setIntroOpen(false);
+        }}
+      />
+
       {/* Join / Recover / Edit Profile Modal */}
       <IdentityModal
         open={identityModalMode !== null}

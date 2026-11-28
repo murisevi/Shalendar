@@ -385,6 +385,15 @@ export interface Translations {
     errOptionalPin: string;
     errJoinFailed: string;
   };
+  intro: {
+    eyebrow: string;
+    title: string;
+    step1Title: string;
+    step1Desc: string;
+    step2Title: string;
+    step2Desc: string;
+    cta: string;
+  };
   settings: {
     title: string;
     subtitle: string;
@@ -901,6 +910,15 @@ const ES: Translations = {
     errJoinName: 'Introduce tu nombre para participar.',
     errOptionalPin: 'El PIN opcional debe tener al menos 4 caracteres.',
     errJoinFailed: 'No se pudo entrar',
+  },
+  intro: {
+    eyebrow: 'Antes de empezar',
+    title: 'Así funciona, en dos pasos',
+    step1Title: 'Marca los días que puedes',
+    step1Desc: 'Pinta en el calendario los días que te vienen bien.',
+    step2Title: 'Vota un día',
+    step2Desc: 'Después, en la votación, elige el día que prefieras de entre los que mejor le vienen al grupo.',
+    cta: '¡Entendido!',
   },
   settings: {
     title: 'Ajustes de la quedada',
@@ -1425,6 +1443,15 @@ const EN: Translations = {
     errJoinName: 'Enter your name to participate.',
     errOptionalPin: 'The optional PIN must be at least 4 characters.',
     errJoinFailed: 'Could not join',
+  },
+  intro: {
+    eyebrow: 'Before you start',
+    title: 'How it works, in two steps',
+    step1Title: 'Mark the days you can make',
+    step1Desc: 'Paint the days that work for you on the calendar.',
+    step2Title: 'Vote for a day',
+    step2Desc: 'Then, in the voting, pick your favourite among the days that suit the group best.',
+    cta: 'Got it!',
   },
   settings: {
     title: 'Plan settings',

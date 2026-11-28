@@ -10,6 +10,24 @@ export interface RecentPlanItem {
 const RECENT_KEY = 'shalendar:recent-plans';
 const THEME_KEY = 'shalendar:theme';
 const LANGUAGE_KEY = 'shalendar:lang';
+const PLAN_INTRO_KEY = 'shalendar:plan-intro-seen';
+
+/** Whether the first-visit "how it works" mini tutorial was already shown on this device. */
+export function hasSeenPlanIntro(): boolean {
+  try {
+    return localStorage.getItem(PLAN_INTRO_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
+export function markPlanIntroSeen(): void {
+  try {
+    localStorage.setItem(PLAN_INTRO_KEY, '1');
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export function getSavedParticipantId(slug: string): string | null {
   try {

@@ -30,8 +30,12 @@ export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps
         aria-modal="true"
         aria-labelledby={titleId}
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-sm rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-7 shadow-2xl space-y-5 animate-sheet-sm-pop"
+        className="relative w-full sm:max-w-sm rounded-t-[28px] sm:rounded-3xl border-t sm:border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 pt-7 sm:p-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-7 shadow-2xl space-y-5 animate-sheet-sm-pop max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain"
       >
+        <span
+          aria-hidden
+          className="sm:hidden absolute left-1/2 top-2.5 h-1.5 w-10 -translate-x-1/2 rounded-full bg-stone-300 dark:bg-slate-700"
+        />
         <div className="text-center space-y-2">
           <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-50 dark:bg-teal-950/60 text-3xl">
             {planEmoji}
@@ -75,7 +79,7 @@ export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps
         <button
           type="button"
           onClick={onClose}
-          className="w-full rounded-xl bg-teal-600 hover:bg-teal-700 py-3 text-sm font-bold text-white shadow-sm transition cursor-pointer"
+          className="w-full rounded-xl bg-teal-600 hover:bg-teal-700 py-3 text-sm font-bold text-white shadow-sm transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
         >
           {t.intro.cta}
         </button>

@@ -1,5 +1,6 @@
 import { CalendarCheck, Vote } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
+import { useModalDialog } from '../lib/useModalDialog';
 
 interface PlanIntroModalProps {
   open: boolean;
@@ -10,6 +11,7 @@ interface PlanIntroModalProps {
 /** Tiny first-visit tutorial: 1) mark the days you can, 2) vote for a day. */
 export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps) {
   const { t } = useI18n();
+  const { dialogRef, titleId } = useModalDialog(open, onClose);
   if (!open) return null;
 
   const steps = [
@@ -23,9 +25,10 @@ export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="plan-intro-title"
+        aria-labelledby={titleId}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-sm rounded-t-[28px] sm:rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-7 shadow-2xl space-y-5 animate-sheet-sm-pop"
       >
@@ -37,7 +40,7 @@ export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps
             {t.intro.eyebrow}
           </p>
           <h2
-            id="plan-intro-title"
+            id={titleId}
             className="font-display text-xl font-extrabold tracking-tight text-stone-900 dark:text-white"
           >
             {t.intro.title}
@@ -71,7 +74,6 @@ export function PlanIntroModal({ open, planEmoji, onClose }: PlanIntroModalProps
 
         <button
           type="button"
-          autoFocus
           onClick={onClose}
           className="w-full rounded-xl bg-teal-600 hover:bg-teal-700 py-3 text-sm font-bold text-white shadow-sm transition cursor-pointer"
         >

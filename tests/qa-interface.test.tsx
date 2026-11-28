@@ -35,6 +35,7 @@ let snapshot: PlanSnapshot;
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear(); localStorage.setItem('shalendar:lang', 'en');
+  localStorage.setItem('shalendar:plan-intro-seen', '1'); // First-visit tutorial has its own test.
   FakeEventSource.instances = [];
   vi.stubGlobal('EventSource', FakeEventSource);
   container = document.createElement('div'); document.body.appendChild(container);
@@ -264,4 +265,19 @@ it('QA-15: recovery and leaving also replace the stream and reject old session e
   expect(getParticipantToken(created.plan.slug)).toBeNull();
   await act(async () => FakeEventSource.instances[1].emit(prior));
   expect(container.textContent).not.toContain('2 of 3 votes left');
+});
+
+it('first visit shows the two-step mini tutorial once and remembers it was dismissed', async () => {
+  localStorage.removeItem('shalendar:plan-intro-seen');
+  const app = createApp(db);
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) => app.request(url, init));
+  await render(<PlanView slug={created.plan.slug} onGoHome={() => {}} theme="light" onToggleTheme={() => {}} />);
+  await settle(() => container.querySelector('[role="dialog"]') !== null);
+  const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('How it works, in two steps');
+  expect(dialog.textContent).toContain('Mark the days you can make');
+  expect(dialog.textContent).toContain('Vote for a day');
+  await click(button('Got it!'));
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+  expect(localStorage.getItem('shalendar:plan-intro-seen')).toBe('1');
 });

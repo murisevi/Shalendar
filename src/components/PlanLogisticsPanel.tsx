@@ -65,6 +65,20 @@ interface PlanLogisticsPanelProps {
 
 export type LogisticsSection = 'all' | 'polls' | 'checklist' | 'carpool';
 
+function safeHttpHref(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function PlanLogisticsPanel({
   participants,
   me,
@@ -126,10 +140,14 @@ export function PlanLogisticsPanel({
       .map((l) => l.trim())
       .filter(Boolean)
       .map((title) => ({ title }));
-    await onCreateSubPoll(pollCategory, pollQuestion.trim(), initialOptions);
-    setPollQuestion('');
-    setPollOptionsRaw('');
-    setShowNewPoll(false);
+    try {
+      await onCreateSubPoll(pollCategory, pollQuestion.trim(), initialOptions);
+      setPollQuestion('');
+      setPollOptionsRaw('');
+      setShowNewPoll(false);
+    } catch {
+      // Error toast is already displayed by parent; keep form inputs intact for retry
+    }
   }
 
   async function handleAddOption(e: React.FormEvent, pollId: string) {
@@ -139,11 +157,15 @@ export function PlanLogisticsPanel({
       onRequireIdentity();
       return;
     }
-    await onAddSubPollOption(pollId, optTitle.trim(), optUrl.trim(), optCost.trim());
-    setOptTitle('');
-    setOptUrl('');
-    setOptCost('');
-    setAddingOptPollId(null);
+    try {
+      await onAddSubPollOption(pollId, optTitle.trim(), optUrl.trim(), optCost.trim());
+      setOptTitle('');
+      setOptUrl('');
+      setOptCost('');
+      setAddingOptPollId(null);
+    } catch {
+      // Error toast is already displayed by parent; keep form inputs intact for retry
+    }
   }
 
   async function handleAddTask(e: React.FormEvent) {
@@ -153,9 +175,13 @@ export function PlanLogisticsPanel({
       onRequireIdentity();
       return;
     }
-    await onAddChecklistItem(taskTitle.trim(), assignTaskToMe);
-    setTaskTitle('');
-    setAssignTaskToMe(false);
+    try {
+      await onAddChecklistItem(taskTitle.trim(), assignTaskToMe);
+      setTaskTitle('');
+      setAssignTaskToMe(false);
+    } catch {
+      // Error toast is already displayed by parent
+    }
   }
 
   async function handleAddCar(e: React.FormEvent) {
@@ -165,12 +191,16 @@ export function PlanLogisticsPanel({
       onRequireIdentity();
       return;
     }
-    await onAddCarpool(carOrigin.trim(), carSeats, carTime.trim(), carNotes.trim());
-    setCarOrigin('');
-    setCarSeats(3);
-    setCarTime('');
-    setCarNotes('');
-    setShowNewCar(false);
+    try {
+      await onAddCarpool(carOrigin.trim(), carSeats, carTime.trim(), carNotes.trim());
+      setCarOrigin('');
+      setCarSeats(3);
+      setCarTime('');
+      setCarNotes('');
+      setShowNewCar(false);
+    } catch {
+      // Error toast is already displayed by parent
+    }
   }
 
   return (
@@ -314,7 +344,8 @@ export function PlanLogisticsPanel({
                         className="sm:col-span-3 rounded-lg border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs outline-none focus:border-teal-500"
                       />
                       <input
-                        type="url"
+                        type="text"
+                        inputMode="url"
                         maxLength={240}
                         value={optUrl}
                         onChange={(e) => setOptUrl(e.target.value)}
@@ -382,17 +413,21 @@ export function PlanLogisticsPanel({
                                     {opt.estimatedCost}
                                   </span>
                                 )}
-                                {opt.url && (
-                                  <a
-                                    href={opt.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline"
-                                  >
-                                    {t.logistics.viewLink}
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                )}
+                                {(() => {
+                                  const href = safeHttpHref(opt.url);
+                                  if (!href) return null;
+                                  return (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline"
+                                    >
+                                      {t.logistics.viewLink}
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  );
+                                })()}
                               </div>
                               <div className="flex items-center gap-2">
                                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-stone-200/80 dark:bg-slate-800">
@@ -523,7 +558,13 @@ export function PlanLogisticsPanel({
                 >
                   <button
                     type="button"
-                    onClick={() => onUpdateChecklistItem(item.id, { completed: !item.completed })}
+                    onClick={() => {
+                      if (!me && !isAdmin) {
+                        onRequireIdentity();
+                        return;
+                      }
+                      void onUpdateChecklistItem(item.id, { completed: !item.completed });
+                    }}
                     className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer"
                   >
                     {item.completed ? (
@@ -574,7 +615,13 @@ export function PlanLogisticsPanel({
 
                     <button
                       type="button"
-                      onClick={() => onDeleteChecklistItem(item.id)}
+                      onClick={() => {
+                        if (!me && !isAdmin) {
+                          onRequireIdentity();
+                          return;
+                        }
+                        void onDeleteChecklistItem(item.id);
+                      }}
                       title={t.common.delete}
                       className="p-1 text-stone-300 hover:text-rose-500 cursor-pointer"
                     >

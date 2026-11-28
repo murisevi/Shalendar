@@ -1,5 +1,5 @@
 import { useModalDialog } from '../lib/useModalDialog';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye, KeyRound, LogOut, MapPin, Save, UserPlus, X } from 'lucide-react';
 import type { Participant, Plan } from '../../shared/types';
 import { AVATAR_COLORS, AVATAR_EMOJIS } from '../../shared/dates';
@@ -44,9 +44,21 @@ export function IdentityModal({
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const initializedRef = useRef<{ open: boolean; mode: 'join' | 'edit' }>({
+    open: false,
+    mode,
+  });
 
+  // Only reset form fields when opening the modal (or changing mode), never when SSE updates participantCount
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedRef.current.open = false;
+      return;
+    }
+    if (initializedRef.current.open && initializedRef.current.mode === mode) {
+      return;
+    }
+    initializedRef.current = { open: true, mode };
     setError(null);
     setPin('');
     if (mode === 'edit' && currentParticipant) {

@@ -132,6 +132,10 @@ export function VotingPanel({
   function handleAddOption(e: React.FormEvent) {
     e.preventDefault();
     if (!nominateDate) return;
+    if (!me) {
+      onRequireIdentity();
+      return;
+    }
     onNominateDate(nominateDate, nominateLabel.trim());
     setNominateLabel('');
     setShowNominateForm(false);
@@ -184,6 +188,10 @@ export function VotingPanel({
           <button
             type="button"
             onClick={() => {
+              if (!me) {
+                onRequireIdentity();
+                return;
+              }
               setNominateDate(selectedDate || rankedDates[0]?.date || '');
               setShowNominateForm((v) => !v);
             }}

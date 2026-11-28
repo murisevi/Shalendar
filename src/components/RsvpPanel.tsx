@@ -26,13 +26,21 @@ export function RsvpPanel({
   const [note, setNote] = useState<string>(myRsvp?.note ?? '');
   const [saving, setSaving] = useState(false);
 
+  const myRsvpStatus = myRsvp?.status;
+  const myRsvpGuests = myRsvp?.guestsCount;
+  const myRsvpNote = myRsvp?.note;
+
   useEffect(() => {
-    if (myRsvp) {
-      setStatus(myRsvp.status);
-      setGuestsCount(myRsvp.guestsCount);
-      setNote(myRsvp.note);
+    if (myRsvpStatus !== undefined) {
+      setStatus(myRsvpStatus);
+      setGuestsCount(myRsvpGuests ?? 0);
+      setNote(myRsvpNote ?? '');
+    } else {
+      setStatus('going');
+      setGuestsCount(0);
+      setNote('');
     }
-  }, [myRsvp]);
+  }, [me?.id, myRsvpStatus, myRsvpGuests, myRsvpNote]);
 
   const participantById = new Map(participants.map((p) => [p.id, p]));
   const goingList = rsvps.filter((r) => r.status === 'going');

@@ -107,6 +107,13 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
     setSubmitting(true);
     setError(null);
     try {
+      let deadlineIso: string | null = null;
+      if (votingDeadline) {
+        const parsedDeadline = new Date(votingDeadline);
+        if (!Number.isNaN(parsedDeadline.getTime())) {
+          deadlineIso = parsedDeadline.toISOString();
+        }
+      }
       const created = await api.createPlan({
         title: title.trim(),
         organizerName: organizerName.trim(),
@@ -121,7 +128,7 @@ export function HomePage({ onOpenPlan, theme, onToggleTheme }: HomePageProps) {
         durationDays,
         holidayCountry,
         blindVoting,
-        votingDeadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
+        votingDeadline: deadlineIso,
         retentionPolicy,
         retentionDays,
       });

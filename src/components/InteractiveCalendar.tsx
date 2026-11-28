@@ -175,9 +175,7 @@ export function InteractiveCalendar({
         for (const s of timeSlots) {
           out.push({ date: item.date, slot: s.id, status: item.status });
         }
-        if (item.status === null) {
-          out.push({ date: item.date, slot: 'all', status: null });
-        }
+        out.push({ date: item.date, slot: 'all', status: null });
       }
       return out;
     }
@@ -734,7 +732,7 @@ export function InteractiveCalendar({
           ref={gridRef}
           onPointerMove={handleGridPointerMove}
           className={`grid grid-cols-7 calendar-no-select ${mobile ? 'gap-1' : 'gap-1.5 sm:gap-2'} ${
-            brush !== 'inspect' ? 'touch-none' : ''
+            brush !== 'inspect' ? 'touch-none' : 'touch-pan-y'
           }`}
         >
           {cells.map((cell, cellIdx) => {

@@ -22,6 +22,36 @@ export const profilePinSchema = z.string().trim().max(12).refine(
   (pin) => pin.length === 0 || pin.length >= 4, 'El PIN debe tener al menos 4 caracteres'
 );
 
+export function normalizeSafeHttpUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const withScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+export const externalUrlSchema = z
+  .string()
+  .trim()
+  .max(260)
+  .transform((val, ctx) => {
+    const normalized = normalizeSafeHttpUrl(val);
+    if (normalized === null || normalized.length > 260) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Enlace no válido (usa http:// o https://)',
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  });
+
 export class ValidationError extends Error {}
 
 // Run against the effective values after defaults/partial updates, before writing either store.

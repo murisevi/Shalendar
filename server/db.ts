@@ -29,6 +29,7 @@ import {
   computeExpiresAt,
   DEFAULT_POST_EVENT_GRACE_DAYS,
   isPlanExpired,
+  pickLaterExpiration,
   type ExportedPlanBackup,
   type PlanSummaryItem,
 } from '../shared/persistence.js';
@@ -56,10 +57,22 @@ function hashPin(participantId: string, pin: string): string {
     .digest('hex');
 }
 
+export interface SqliteRetentionDefaults {
+  defaultRetentionPolicy?: RetentionPolicy;
+  defaultRetentionDays?: number;
+  postEventGraceDays?: number;
+}
+
 export class ShalendarDB {
   private db: DatabaseSync;
+  private readonly defaultRetentionPolicy: RetentionPolicy;
+  private readonly defaultRetentionDays: number;
+  private readonly postEventGraceDays: number;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, defaults?: SqliteRetentionDefaults) {
+    this.defaultRetentionPolicy = defaults?.defaultRetentionPolicy ?? 'ephemeral_after_event';
+    this.defaultRetentionDays = defaults?.defaultRetentionDays ?? 30;
+    this.postEventGraceDays = defaults?.postEventGraceDays ?? DEFAULT_POST_EVENT_GRACE_DAYS;
     if (dbPath !== ':memory:') {
       const dir = path.dirname(dbPath);
       if (!fs.existsSync(dir)) {
@@ -405,26 +418,28 @@ export class ShalendarDB {
   private touchPlanActivity(planId: string): void {
     const row = this.db
       .prepare(
-        'SELECT is_demo, retention_policy, retention_days, confirmed_date, confirmed_end_date FROM plans WHERE id = ?'
+        'SELECT is_demo, retention_policy, retention_days, confirmed_date, confirmed_end_date, expires_at FROM plans WHERE id = ?'
       )
       .get(planId) as Record<string, unknown> | undefined;
     if (!row || Number(row.is_demo ?? 0) === 1) return;
 
     const now = new Date();
-    const policy = String(row.retention_policy ?? 'ephemeral_after_event') as RetentionPolicy;
-    const retentionDays = Number(row.retention_days ?? 30);
+    const policy = String(row.retention_policy ?? this.defaultRetentionPolicy) as RetentionPolicy;
+    const retentionDays = Number(row.retention_days ?? this.defaultRetentionDays);
     const confirmedDate = row.confirmed_date ? String(row.confirmed_date) : null;
     const confirmedEndDate = row.confirmed_end_date ? String(row.confirmed_end_date) : null;
+    const currentExpiresAt = row.expires_at ? String(row.expires_at) : null;
 
     if (policy === 'sliding_inactivity' || (policy === 'ephemeral_after_event' && !confirmedDate)) {
-      const nextExpiresAt = computeExpiresAt({
+      const candidateExpiresAt = computeExpiresAt({
         policy,
         retentionDays,
         now,
         confirmedDate,
         confirmedEndDate,
-        postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
+        postEventGraceDays: this.postEventGraceDays,
       });
+      const nextExpiresAt = pickLaterExpiration(currentExpiresAt, candidateExpiresAt);
       this.db
         .prepare('UPDATE plans SET last_activity_at = ?, expires_at = ? WHERE id = ?')
         .run(now.toISOString(), nextExpiresAt, planId);
@@ -784,11 +799,11 @@ export class ShalendarDB {
     const visibility: PlanVisibility = isDemo ? 'public_demo' : 'unlisted';
     const retentionPolicy: RetentionPolicy = isDemo
       ? 'persistent'
-      : (input.retentionPolicy ?? 'ephemeral_after_event');
+      : (input.retentionPolicy ?? this.defaultRetentionPolicy);
     const retentionDays =
       retentionPolicy === 'persistent'
         ? 0
-        : Math.max(1, Math.min(365, input.retentionDays ?? 30));
+        : Math.max(1, Math.min(365, input.retentionDays ?? this.defaultRetentionDays));
     const expiresAt = isDemo
       ? null
       : computeExpiresAt({
@@ -796,7 +811,7 @@ export class ShalendarDB {
           retentionDays,
           now,
           createdAt: now,
-          postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
+          postEventGraceDays: this.postEventGraceDays,
         });
 
     this.db
@@ -1519,21 +1534,39 @@ export class ShalendarDB {
       updates.retentionDays !== undefined ||
       updates.confirmedDate !== undefined ||
       updates.confirmedEndDate !== undefined;
-    const nextExpiresAt = isDemo
-      ? null
-      : retentionChanged || nextRetentionPolicy === 'sliding_inactivity'
-        ? computeExpiresAt({
-            policy: nextRetentionPolicy,
-            retentionDays: nextRetentionDays,
-            now,
-            createdAt: new Date(String(row.created_at)),
-            confirmedDate: nextConfirmedDate,
-            confirmedEndDate: nextConfirmedEndDate,
-            postEventGraceDays: DEFAULT_POST_EVENT_GRACE_DAYS,
-          })
-        : row.expires_at
-          ? String(row.expires_at)
-          : null;
+    const switchedToFixedTtl =
+      nextRetentionPolicy === 'fixed_ttl' &&
+      (updates.retentionPolicy !== undefined || updates.retentionDays !== undefined);
+    const existingExpiresAt = row.expires_at ? String(row.expires_at) : null;
+
+    let nextExpiresAt: string | null;
+    if (isDemo) {
+      nextExpiresAt = null;
+    } else if (retentionChanged) {
+      nextExpiresAt = computeExpiresAt({
+        policy: nextRetentionPolicy,
+        retentionDays: nextRetentionDays,
+        now,
+        // Anchor newly chosen fixed_ttl from now so switching an older plan never deletes it immediately
+        createdAt: switchedToFixedTtl ? now : new Date(String(row.created_at)),
+        confirmedDate: nextConfirmedDate,
+        confirmedEndDate: nextConfirmedEndDate,
+        postEventGraceDays: this.postEventGraceDays,
+      });
+    } else if (nextRetentionPolicy === 'sliding_inactivity') {
+      const candidate = computeExpiresAt({
+        policy: nextRetentionPolicy,
+        retentionDays: nextRetentionDays,
+        now,
+        createdAt: new Date(String(row.created_at)),
+        confirmedDate: nextConfirmedDate,
+        confirmedEndDate: nextConfirmedEndDate,
+        postEventGraceDays: this.postEventGraceDays,
+      });
+      nextExpiresAt = pickLaterExpiration(existingExpiresAt, candidate);
+    } else {
+      nextExpiresAt = existingExpiresAt;
+    }
 
     this.db
       .prepare(`

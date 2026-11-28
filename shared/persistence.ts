@@ -187,6 +187,23 @@ export function isPlanExpired(expiresAt: string | null, now = new Date()): boole
   return ts <= now.getTime();
 }
 
+/**
+ * Returns whichever non-null ISO timestamp is later so background activity touches
+ * never shorten an explicit organizer extension.
+ */
+export function pickLaterExpiration(
+  currentExpiresAt: string | null | undefined,
+  candidateExpiresAt: string | null
+): string | null {
+  if (!candidateExpiresAt) return null;
+  if (!currentExpiresAt) return candidateExpiresAt;
+  const curMs = Date.parse(currentExpiresAt);
+  const candMs = Date.parse(candidateExpiresAt);
+  if (Number.isNaN(curMs)) return candidateExpiresAt;
+  if (Number.isNaN(candMs)) return currentExpiresAt;
+  return curMs > candMs ? currentExpiresAt : candidateExpiresAt;
+}
+
 export function getRemainingDays(expiresAt: string | null, now = new Date()): number | null {
   if (!expiresAt) return null;
   const ts = Date.parse(expiresAt);

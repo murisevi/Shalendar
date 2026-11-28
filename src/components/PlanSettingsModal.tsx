@@ -1,5 +1,5 @@
 import { useModalDialog } from '../lib/useModalDialog';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   Clock,
@@ -78,9 +78,16 @@ export function PlanSettingsModal({
   const [saving, setSaving] = useState(false);
   const [extending, setExtending] = useState(false);
   const [copiedCoAdmin, setCopiedCoAdmin] = useState(false);
+  const wasOpenRef = useRef(false);
 
+  // Only populate form state when the modal opens (not on every background SSE snapshot)
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
     setTitle(plan.title);
     setDescription(plan.description);
     setLocation(plan.location);
@@ -110,6 +117,13 @@ export function PlanSettingsModal({
     e.preventDefault();
     if (!title.trim()) return;
     setSaving(true);
+    let deadlineIso: string | null = null;
+    if (votingDeadline) {
+      const parsedDeadline = new Date(votingDeadline);
+      if (!Number.isNaN(parsedDeadline.getTime())) {
+        deadlineIso = parsedDeadline.toISOString();
+      }
+    }
     try {
       await onSave({
         title: title.trim(),
@@ -121,7 +135,7 @@ export function PlanSettingsModal({
         durationDays,
         holidayCountry,
         blindVoting,
-        votingDeadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
+        votingDeadline: deadlineIso,
         requiredParticipantIds: requiredIds,
         retentionPolicy,
         retentionDays,
@@ -480,7 +494,16 @@ export function PlanSettingsModal({
               <button
                 type="button"
                 onClick={async () => {
-                  await navigator.clipboard.writeText(coOrgUrl).catch(() => {});
+                  try {
+                    await navigator.clipboard.writeText(coOrgUrl);
+                  } catch {
+                    const ta = document.createElement('textarea');
+                    ta.value = coOrgUrl;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                  }
                   setCopiedCoAdmin(true);
                   setTimeout(() => setCopiedCoAdmin(false), 2000);
                 }}

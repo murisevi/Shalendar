@@ -20,7 +20,7 @@ import type {
   RsvpEntry,
   VoteEntry,
 } from '../../shared/types';
-import { formatDateLong, formatDateRange } from '../../shared/dates';
+import { formatDateLong, formatDateRange, isVotingEffectivelyOpen } from '../../shared/dates';
 import { buildDeviceTransferUrl } from '../lib/storage';
 import { downloadOrShareInviteCard } from '../lib/inviteCard';
 import { useI18n } from '../lib/i18n';
@@ -77,7 +77,7 @@ export function ShareModal({
   const [inviteQr, setInviteQr] = useState<string>('');
   const [deviceQr, setDeviceQr] = useState<string>('');
 
-  const shareUrl = `${window.location.origin}/e/${plan.slug}`;
+  const shareUrl = `${window.location.origin}/e/${encodeURIComponent(plan.slug)}`;
   const transferUrl = useMemo(
     () => (open && hasSession ? buildDeviceTransferUrl(plan.slug, true) : ''),
     [open, hasSession, plan.slug]
@@ -105,11 +105,12 @@ export function ShareModal({
     const voteIds = new Set(votes.map((v) => v.participantId));
     const noAvail = participants.filter((p) => !availIds.has(p.id));
     if (noAvail.length > 0) return noAvail;
-    if (plan.votingOpen && votes.length > 0) {
+    const blindVotesHidden = plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate;
+    if (!blindVotesHidden && plan.votingOpen && votes.length > 0) {
       return participants.filter((p) => !voteIds.has(p.id));
     }
     return [];
-  }, [plan.confirmedDate, plan.votingOpen, participants, availabilities, votes, rsvps]);
+  }, [plan, participants, availabilities, votes, rsvps]);
 
   if (!open) return null;
 

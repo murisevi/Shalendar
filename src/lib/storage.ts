@@ -127,10 +127,13 @@ export function forgetPlan(slug: string): void {
 
 export function buildDeviceTransferUrl(slug: string, includeAdmin = true): string {
   const url = new URL(`${window.location.origin}/e/${encodeURIComponent(slug)}`);
+  const hashParams = new URLSearchParams();
   const pToken = getParticipantToken(slug);
   const aToken = includeAdmin ? getAdminToken(slug) : null;
-  if (pToken) url.searchParams.set('pt', pToken);
-  if (aToken) url.searchParams.set('at', aToken);
+  if (pToken) hashParams.set('pt', pToken);
+  if (aToken) hashParams.set('at', aToken);
+  const fragment = hashParams.toString();
+  if (fragment) url.hash = fragment;
   return url.toString();
 }
 
@@ -138,7 +141,7 @@ export function buildCoOrganizerUrl(slug: string): string | null {
   const aToken = getAdminToken(slug);
   if (!aToken) return null;
   const url = new URL(`${window.location.origin}/e/${encodeURIComponent(slug)}`);
-  url.searchParams.set('at', aToken);
+  url.hash = `at=${encodeURIComponent(aToken)}`;
   return url.toString();
 }
 

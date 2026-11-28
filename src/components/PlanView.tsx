@@ -100,6 +100,8 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [expired, setExpired] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [liveConnected, setLiveConnected] = useState(false);
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
 
@@ -142,6 +144,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
   const [undoStack, setUndoStack] = useState<
     Array<Array<{ date: string; slot: AvailabilitySlot; status: AvailabilityStatus | null; note?: string }>>
   >([]);
+  const undoStackRef = useRef(undoStack);
+  undoStackRef.current = undoStack;
+  const pendingAvailabilityWritesRef = useRef(0);
+  const availabilityQueueRef = useRef<Promise<void>>(Promise.resolve());
   const snapshotRef = useRef<PlanSnapshot | null>(null);
   snapshotRef.current = snapshot;
   const tRef = useRef(t);
@@ -164,21 +170,28 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
   }, [snapshot?.plan, expired, notFound, t.plan.expiredTitle, t.plan.notFoundTitle]);
 
-  // Load initial snapshot and handle cross-device magic tokens (?pt=...&at=...).
+  // Load initial snapshot and handle cross-device magic tokens (#pt=...&at=... or legacy ?pt=...&at=...).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setNotFound(false);
     setExpired(false);
+    setLoadError(false);
+    setUndoStack([]);
+    setFilterParticipantIds([]);
+    setPaintMode(false);
+    pendingAvailabilityWritesRef.current = 0;
 
     async function boot() {
-      // 1. Check cross-device transfer tokens in URL query params or #admin= hash and clean URL immediately
+      // 1. Check cross-device transfer tokens in URL hash fragment or legacy query params and clean URL immediately
       const url = new URL(window.location.href);
-      const pt = url.searchParams.get('pt');
-      const hashAdmin = url.hash.startsWith('#admin=')
-        ? decodeURIComponent(url.hash.slice('#admin='.length))
-        : null;
-      const at = url.searchParams.get('at') ?? hashAdmin;
+      const rawHash = url.hash.startsWith('#') ? url.hash.slice(1) : '';
+      const hashParams = new URLSearchParams(rawHash);
+      const pt = hashParams.get('pt') ?? url.searchParams.get('pt');
+      const at =
+        hashParams.get('at') ??
+        hashParams.get('admin') ??
+        url.searchParams.get('at');
       if (pt || at) {
         if (pt) saveParticipantToken(slug, pt);
         if (at) saveAdminToken(slug, at);
@@ -210,7 +223,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
             setIsAdmin(session.isAdmin);
           }
         } catch {
-          // Ignore invalid token
+          // Ignore transient network errors or invalid token without wiping stored tokens
         }
       } else {
         saveParticipantId(slug, null);
@@ -251,6 +264,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           setSelectedDate(focusDate);
           setCurrentMonth(focusDate.slice(0, 7));
         } else {
+          setSelectedDate(null);
           setCurrentMonth(data.plan.startMonth);
         }
 
@@ -266,8 +280,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         if (err instanceof ApiError && err.expired) {
           forgetPlan(slug);
           setExpired(true);
-        } else {
+        } else if (err instanceof ApiError && err.status === 404) {
           setNotFound(true);
+        } else {
+          setLoadError(true);
         }
         setLoading(false);
       }
@@ -278,21 +294,49 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     return () => {
       cancelled = true;
     };
-  }, [slug, showToast]);
+  }, [slug, reloadNonce, showToast]);
 
   // Reconnect after join, recovery (including the same profile), leave, or slug change.
   // Old stream callbacks also reject snapshots once local session credentials change.
   useEffect(() => {
-    if (loading || notFound || expired || snapshot?.plan.slug !== slug) return;
+    if (loading || notFound || expired || loadError || snapshot?.plan.slug !== slug) return;
     return subscribePlanStream(slug, {
       onSnapshot: (next) => {
+        if (pendingAvailabilityWritesRef.current > 0) return;
         setSnapshot(next);
         if (next.onlineParticipantIds) setOnlineIds(next.onlineParticipantIds);
       },
       onPresence: setOnlineIds,
       onConnectionChange: setLiveConnected,
     });
-  }, [slug, loading, notFound, expired, myParticipantId, sessionVersion, snapshot?.plan.slug]);
+  }, [slug, loading, notFound, expired, loadError, myParticipantId, sessionVersion, snapshot?.plan.slug]);
+
+  // Re-sync immediately when returning from WhatsApp / background tab or regaining network
+  useEffect(() => {
+    if (loading || notFound || expired || loadError || snapshot?.plan.slug !== slug) return;
+    let disposed = false;
+    const refreshLatest = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (pendingAvailabilityWritesRef.current > 0) return;
+      api
+        .getPlan(slug)
+        .then((fresh) => {
+          if (disposed || pendingAvailabilityWritesRef.current > 0) return;
+          setSnapshot(fresh);
+          if (fresh.onlineParticipantIds) setOnlineIds(fresh.onlineParticipantIds);
+        })
+        .catch(() => {
+          // Keep current view if still offline
+        });
+    };
+    document.addEventListener('visibilitychange', refreshLatest);
+    window.addEventListener('online', refreshLatest);
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', refreshLatest);
+      window.removeEventListener('online', refreshLatest);
+    };
+  }, [slug, loading, notFound, expired, loadError, snapshot?.plan.slug]);
 
   const me = useMemo(() => {
     if (!snapshot || !myParticipantId) return null;
@@ -460,6 +504,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       recordUndo = true
     ) => {
       if (!me || changes.length === 0) return;
+      const participantId = me.id;
       const prevSnap = snapshotRef.current;
 
       // Build inverse changes for Undo stack
@@ -467,7 +512,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         const inverse = changes.map((ch) => {
           const slot: AvailabilitySlot = ch.slot ?? 'all';
           const existing = prevSnap.availabilities.find(
-            (a) => a.participantId === me.id && a.date === ch.date && (a.slot || 'all') === slot
+            (a) => a.participantId === participantId && a.date === ch.date && (a.slot || 'all') === slot
           );
           return {
             date: ch.date,
@@ -489,7 +534,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         const filtered: AvailabilityEntry[] = [];
         for (const a of prev.availabilities) {
           const k = `${a.date}:${a.slot || 'all'}`;
-          if (a.participantId === me.id && keyedChanges.has(k)) {
+          if (a.participantId === participantId && keyedChanges.has(k)) {
             existingNotes.set(k, a.note);
             continue;
           }
@@ -500,7 +545,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
           const slot: AvailabilitySlot = ch.slot ?? 'all';
           if (ch.status !== null) {
             filtered.push({
-              participantId: me.id,
+              participantId,
               date: ch.date,
               slot,
               status: ch.status,
@@ -512,28 +557,53 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         return { ...prev, availabilities: filtered };
       });
 
-      try {
-        const res = await api.setAvailability(slug, {
-          participantId: me.id,
-          changes,
-        });
-        setSnapshot(res.snapshot);
-      } catch (err) {
-        if (prevSnap) setSnapshot(prevSnap);
-        showToast(err instanceof Error ? err.message : tRef.current.plan.toasts.saveAvailabilityErr, 'err');
-      }
+      // Serialize availability PUTs so rapid taps never race out of order or clobber optimistic state
+      pendingAvailabilityWritesRef.current += 1;
+      const queuedWrite = availabilityQueueRef.current.then(async () => {
+        try {
+          const res = await api.setAvailability(slug, {
+            participantId,
+            changes,
+          });
+          pendingAvailabilityWritesRef.current = Math.max(
+            0,
+            pendingAvailabilityWritesRef.current - 1
+          );
+          if (pendingAvailabilityWritesRef.current === 0) {
+            setSnapshot(res.snapshot);
+          }
+        } catch (err) {
+          pendingAvailabilityWritesRef.current = Math.max(
+            0,
+            pendingAvailabilityWritesRef.current - 1
+          );
+          showToast(
+            err instanceof Error ? err.message : tRef.current.plan.toasts.saveAvailabilityErr,
+            'err'
+          );
+          if (pendingAvailabilityWritesRef.current === 0) {
+            try {
+              const authoritative = await api.getPlan(slug);
+              setSnapshot(authoritative);
+            } catch {
+              if (prevSnap) setSnapshot(prevSnap);
+            }
+          }
+        }
+      });
+      availabilityQueueRef.current = queuedWrite;
+      await queuedWrite;
     },
     [me, slug, showToast]
   );
 
   const handleUndo = useCallback(() => {
-    setUndoStack((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      handleCommitAvailability(last, false);
-      showToast(tRef.current.plan.toasts.undone);
-      return prev.slice(0, -1);
-    });
+    const stack = undoStackRef.current;
+    if (stack.length === 0) return;
+    const last = stack[stack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    void handleCommitAvailability(last, false);
+    showToast(tRef.current.plan.toasts.undone);
   }, [handleCommitAvailability, showToast]);
 
   async function handleToggleVote(date: string) {
@@ -671,10 +741,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
     }
   }
 
-  async function handleAddComment(date: string | null, body: string) {
+  async function handleAddComment(date: string | null, body: string): Promise<boolean> {
     if (!me) {
       setIdentityModalMode('join');
-      return;
+      return false;
     }
     try {
       const res = await api.addComment(slug, {
@@ -683,8 +753,10 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         body,
       });
       setSnapshot(res.snapshot);
+      return true;
     } catch (err) {
       showToast(err instanceof Error ? err.message : t.plan.toasts.commentErr, 'err');
+      return false;
     }
   }
 
@@ -777,6 +849,51 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
             <ArrowLeft className="h-4 w-4" />
             {t.plan.createNewPlanBtn}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAF9F6] dark:bg-[#0E1318] p-4 gap-4">
+        <div className="flex items-center gap-2">
+          <LanguageSelector variant="rounded" />
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={t.common.changeTheme}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-stone-600 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-700 transition cursor-pointer"
+          >
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        </div>
+        <div className="max-w-md rounded-3xl border border-stone-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center space-y-4 shadow-lg">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 dark:bg-amber-950/70 text-3xl">
+            📡
+          </div>
+          <h1 className="font-display text-2xl font-extrabold">{t.plan.loadErrorTitle}</h1>
+          <p className="text-sm text-stone-500 dark:text-slate-400">
+            {t.plan.loadErrorDesc}
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setReloadNonce((n) => n + 1)}
+              className="inline-flex items-center gap-2 rounded-xl bg-teal-600 hover:bg-teal-700 px-5 py-2.5 text-sm font-bold text-white transition cursor-pointer"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t.plan.retryBtn}
+            </button>
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="inline-flex items-center gap-2 rounded-xl border border-stone-200 dark:border-slate-700 px-4 py-2.5 text-sm font-semibold text-stone-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-slate-800 transition cursor-pointer"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t.plan.backHome}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1045,6 +1162,7 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       rankedDates={rankedDates}
       confirmedDate={plan.confirmedDate}
       selectedDate={selectedDate}
+      votingOpen={votingOpenEffective}
       blindVotingHidden={Boolean(blindVoteStats?.hidden)}
       onSelectDate={onSelect}
       onToggleVote={handleToggleVote}
@@ -1065,70 +1183,110 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       checklist={checklist}
       carpools={carpools}
       onCreateSubPoll={async (category: SubPollCategory, question, initialOptions) => {
-        const res = await api.createSubPoll(slug, {
-          participantId: me?.id,
-          category,
-          question,
-          initialOptions,
-        });
-        setSnapshot(res.snapshot);
-        showToast(t.plan.toasts.pollCreated);
+        try {
+          const res = await api.createSubPoll(slug, {
+            participantId: me?.id,
+            category,
+            question,
+            initialOptions,
+          });
+          setSnapshot(res.snapshot);
+          showToast(t.plan.toasts.pollCreated);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+          throw err;
+        }
       }}
       onAddSubPollOption={async (pollId, title, url, estimatedCost) => {
-        const res = await api.addSubPollOption(slug, pollId, {
-          participantId: me?.id,
-          title,
-          url,
-          estimatedCost,
-        });
-        setSnapshot(res.snapshot);
-        showToast(t.plan.toasts.optionAdded);
+        try {
+          const res = await api.addSubPollOption(slug, pollId, {
+            participantId: me?.id,
+            title,
+            url,
+            estimatedCost,
+          });
+          setSnapshot(res.snapshot);
+          showToast(t.plan.toasts.optionAdded);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+          throw err;
+        }
       }}
       onToggleSubPollVote={async (pollId, optionId) => {
         if (!me) return;
-        const res = await api.toggleSubPollVote(slug, pollId, {
-          participantId: me.id,
-          optionId,
-        });
-        setSnapshot(res.snapshot);
+        try {
+          const res = await api.toggleSubPollVote(slug, pollId, {
+            participantId: me.id,
+            optionId,
+          });
+          setSnapshot(res.snapshot);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.voteErr, 'err');
+        }
       }}
       onSetSubPollWinner={async (pollId, winnerOptionId) => {
-        const res = await api.setSubPollWinner(slug, pollId, winnerOptionId);
-        setSnapshot(res.snapshot);
-        showToast(winnerOptionId ? t.plan.toasts.winnerSet : t.plan.toasts.winnerCleared);
+        try {
+          const res = await api.setSubPollWinner(slug, pollId, winnerOptionId);
+          setSnapshot(res.snapshot);
+          showToast(winnerOptionId ? t.plan.toasts.winnerSet : t.plan.toasts.winnerCleared);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+        }
       }}
       onDeleteSubPoll={async (pollId) => {
-        const res = await api.deleteSubPoll(slug, pollId);
-        setSnapshot(res.snapshot);
-        showToast(t.plan.toasts.pollDeleted);
+        try {
+          const res = await api.deleteSubPoll(slug, pollId);
+          setSnapshot(res.snapshot);
+          showToast(t.plan.toasts.pollDeleted);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.deleteErr, 'err');
+        }
       }}
       onAddChecklistItem={async (title, assignToMe) => {
-        const res = await api.addChecklistItem(slug, {
-          participantId: me?.id,
-          title,
-          assignedTo: assignToMe ? me?.id ?? null : null,
-        });
-        setSnapshot(res.snapshot);
+        try {
+          const res = await api.addChecklistItem(slug, {
+            participantId: me?.id,
+            title,
+            assignedTo: assignToMe ? me?.id ?? null : null,
+          });
+          setSnapshot(res.snapshot);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+          throw err;
+        }
       }}
       onUpdateChecklistItem={async (itemId, updates) => {
-        const res = await api.updateChecklistItem(slug, itemId, updates);
-        setSnapshot(res.snapshot);
+        try {
+          const res = await api.updateChecklistItem(slug, itemId, updates);
+          setSnapshot(res.snapshot);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+        }
       }}
       onDeleteChecklistItem={async (itemId) => {
-        const res = await api.deleteChecklistItem(slug, itemId);
-        setSnapshot(res.snapshot);
+        try {
+          const res = await api.deleteChecklistItem(slug, itemId);
+          setSnapshot(res.snapshot);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.deleteErr, 'err');
+        }
       }}
       onAddCarpool={async (origin, seatsTotal, departureTime, notes) => {
         if (!me) return;
-        const res = await api.addCarpoolRide(slug, {
-          driverId: me.id,
-          origin,
-          seatsTotal,
-          departureTime,
-          notes,
-        });
-        setSnapshot(res.snapshot);
-        showToast(t.plan.toasts.carPublished);
+        try {
+          const res = await api.addCarpoolRide(slug, {
+            driverId: me.id,
+            origin,
+            seatsTotal,
+            departureTime,
+            notes,
+          });
+          setSnapshot(res.snapshot);
+          showToast(t.plan.toasts.carPublished);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.saveErr, 'err');
+          throw err;
+        }
       }}
       onToggleCarpoolSeat={async (rideId) => {
         if (!me) return;
@@ -1141,9 +1299,13 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
         }
       }}
       onDeleteCarpool={async (rideId) => {
-        const res = await api.deleteCarpoolRide(slug, rideId);
-        setSnapshot(res.snapshot);
-        showToast(t.plan.toasts.carDeleted);
+        try {
+          const res = await api.deleteCarpoolRide(slug, rideId);
+          setSnapshot(res.snapshot);
+          showToast(t.plan.toasts.carDeleted);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : t.plan.toasts.deleteErr, 'err');
+        }
       }}
       onRequireIdentity={requireIdentity}
     />
@@ -1217,11 +1379,16 @@ export function PlanView({ slug, onGoHome, theme, onToggleTheme }: PlanViewProps
       )}
 
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (!generalNote.trim()) return;
-          handleAddComment(null, generalNote.trim());
-          setGeneralNote('');
+          const text = generalNote.trim();
+          if (!text) return;
+          if (!me) {
+            requireIdentity();
+            return;
+          }
+          const ok = await handleAddComment(null, text);
+          if (ok) setGeneralNote('');
         }}
         className="flex items-center gap-1.5 pt-1"
       >

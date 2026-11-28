@@ -6,7 +6,11 @@ import { applyTheme, getInitialTheme, type ThemeMode } from './lib/storage';
 function parseRoute(pathname: string): { page: 'home' } | { page: 'plan'; slug: string } {
   const match = pathname.match(/^\/e\/([^/]+)\/?$/);
   if (match && match[1]) {
-    return { page: 'plan', slug: decodeURIComponent(match[1]) };
+    try {
+      return { page: 'plan', slug: decodeURIComponent(match[1]) };
+    } catch {
+      return { page: 'home' };
+    }
   }
   return { page: 'home' };
 }

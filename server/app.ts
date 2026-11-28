@@ -4,17 +4,19 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { z } from 'zod';
-import { calendarDateSchema, calendarMonthSchema, clockTimeSchema, timezoneSchema, deadlineSchema, profilePinSchema, ValidationError } from './validation.js';
+import { calendarDateSchema, calendarMonthSchema, clockTimeSchema, timezoneSchema, deadlineSchema, profilePinSchema, externalUrlSchema, ValidationError } from './validation.js';
 import type { ShalendarDB } from './db.js';
 import { PlanEventHub } from './events.js';
 import type { ShalendarStore } from './store.js';
 import { asShalendarStore } from './persistence/sqlite-store.js';
 import { PlanExpiredError } from './persistence/repository.js';
 import { InMemoryRateLimiter } from './persistence/security.js';
+import type { PlanSnapshot } from '../shared/types.js';
 import {
   computeDaySummaries,
   formatDateLong,
   formatDateRange,
+  isVotingEffectivelyOpen,
   rankBestDates,
 } from '../shared/dates.js';
 import { localizeServerError, resolveRequestLanguage } from './i18n.js';
@@ -145,7 +147,7 @@ const createSubPollSchema = z.object({
     .array(
       z.object({
         title: z.string().trim().min(1).max(100),
-        url: z.string().trim().max(260).optional(),
+        url: externalUrlSchema.optional(),
         estimatedCost: z.string().trim().max(32).optional(),
       })
     )
@@ -156,7 +158,7 @@ const createSubPollSchema = z.object({
 const addSubPollOptionSchema = z.object({
   participantId: z.string().min(1).optional(),
   title: z.string().trim().min(1, 'Escribe una opción').max(100),
-  url: z.string().trim().max(260).optional(),
+  url: externalUrlSchema.optional(),
   estimatedCost: z.string().trim().max(32).optional(),
 });
 
@@ -196,6 +198,58 @@ const toggleCarpoolSeatSchema = z.object({
 export interface CreateAppOptions {
   purgeCronSecret?: string | null;
   maxPlansPerHourPerIp?: number;
+  maxPinClaimsPerWindow?: number;
+  persistentStorage?: boolean;
+}
+
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+function resolvePublicOrigin(req: {
+  url: string;
+  header: (k: string) => string | undefined;
+}): string {
+  const parsed = new URL(req.url);
+  const rawProto = req.header('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
+  const proto = rawProto === 'https' || rawProto === 'http' ? rawProto : parsed.protocol.replace(/:$/, '');
+  const rawHost = req.header('x-forwarded-host')?.split(',')[0]?.trim() || req.header('host')?.trim() || parsed.host;
+  return `${proto}://${rawHost}`;
+}
+
+function maskPlanSnapshotForViewer(
+  fullSnapshot: PlanSnapshot,
+  viewerParticipantId: string | null,
+  onlineParticipantIds?: string[]
+): PlanSnapshot {
+  const { plan, votes: allVotes } = fullSnapshot;
+  const hideVotes = plan.blindVoting && isVotingEffectivelyOpen(plan) && !plan.confirmedDate;
+  const votes = hideVotes
+    ? allVotes.filter((v) => viewerParticipantId !== null && v.participantId === viewerParticipantId)
+    : allVotes;
+  const blindVoteStats = hideVotes
+    ? {
+        totalVotes: allVotes.length,
+        votersCount: new Set(allVotes.map((v) => v.participantId)).size,
+        hidden: true,
+      }
+    : undefined;
+
+  const masked: PlanSnapshot = {
+    ...fullSnapshot,
+    votes,
+    ...(onlineParticipantIds ? { onlineParticipantIds } : {}),
+  };
+  if (blindVoteStats) {
+    masked.blindVoteStats = blindVoteStats;
+  } else {
+    delete masked.blindVoteStats;
+  }
+  return masked;
 }
 
 function escapeHtmlAttr(str: string): string {
@@ -262,6 +316,10 @@ export function createApp(
     options.maxPlansPerHourPerIp ?? 30,
     60 * 60 * 1000
   );
+  const pinClaimLimiter = new InMemoryRateLimiter(
+    options.maxPinClaimsPerWindow ?? 30,
+    15 * 60 * 1000
+  );
 
   // Global error mapping (including 410 Gone for expired ephemeral plans)
   app.onError((err, c) => {
@@ -326,20 +384,31 @@ export function createApp(
   };
 
   const broadcast = async (slug: string, viewerParticipantId: string | null = null) => {
-    hub.notifyUpdate(slug);
-    return store.getPlanSnapshotBySlug(slug, {
-      viewerParticipantId,
-      onlineParticipantIds: hub.getOnlineParticipantIds(slug),
+    const onlineParticipantIds = hub.getOnlineParticipantIds(slug);
+    const fullSnapshot = await store.getPlanSnapshotBySlug(slug, {
+      includeAllVotes: true,
+      onlineParticipantIds,
     });
+    if (fullSnapshot) {
+      hub.notifyUpdate(slug, fullSnapshot);
+      return maskPlanSnapshotForViewer(fullSnapshot, viewerParticipantId, onlineParticipantIds);
+    }
+    hub.notifyUpdate(slug);
+    return null;
   };
 
   // Readiness & liveness healthcheck (verifies DB connectivity for Northflank / Docker)
   app.get('/api/health', async (c) => {
     const health = await store.checkHealth();
+    const persistentStorage =
+      options.persistentStorage !== undefined
+        ? options.persistentStorage
+        : health.driver === 'postgres';
     return c.json(
       {
         ok: health.ok,
         driver: health.driver,
+        persistentStorage,
         latencyMs: health.latencyMs,
         ...(health.error ? { error: health.error } : {}),
         time: new Date().toISOString(),
@@ -527,11 +596,28 @@ export function createApp(
 
     return streamSSE(c, async (stream) => {
       let active = true;
+      let unsubscribe: () => void = () => {};
 
-      const unsubscribe = hub.subscribe(slug, {
+      const closeStream = () => {
+        if (!active) return;
+        active = false;
+        unsubscribe();
+      };
+
+      unsubscribe = hub.subscribe(slug, {
         participantId: viewerId,
-        onUpdate: (onlineParticipantIds) => {
+        onUpdate: (onlineParticipantIds, fullSnapshot) => {
           if (!active) return;
+          if (fullSnapshot) {
+            const masked = maskPlanSnapshotForViewer(fullSnapshot, viewerId, onlineParticipantIds);
+            void stream
+              .writeSSE({
+                event: 'snapshot',
+                data: JSON.stringify(masked),
+              })
+              .catch(closeStream);
+            return;
+          }
           void store
             .getPlanSnapshotBySlug(slug, {
               viewerParticipantId: viewerId,
@@ -544,9 +630,7 @@ export function createApp(
                 data: JSON.stringify(snap),
               });
             })
-            .catch(() => {
-              active = false;
-            });
+            .catch(closeStream);
         },
         onPresence: (onlineParticipantIds) => {
           if (!active) return;
@@ -555,43 +639,39 @@ export function createApp(
               event: 'presence',
               data: JSON.stringify({ onlineParticipantIds }),
             })
-            .catch(() => {
-              active = false;
-            });
+            .catch(closeStream);
         },
       });
 
-      if (sendInitial) {
-        const initial = await store.getPlanSnapshotBySlug(slug, {
-          viewerParticipantId: viewerId,
-          onlineParticipantIds: hub.getOnlineParticipantIds(slug),
-        });
-        if (initial) {
+      stream.onAbort(closeStream);
+
+      try {
+        if (sendInitial) {
+          const initial = await store.getPlanSnapshotBySlug(slug, {
+            viewerParticipantId: viewerId,
+            onlineParticipantIds: hub.getOnlineParticipantIds(slug),
+          });
+          if (initial && active) {
+            await stream.writeSSE({
+              event: 'snapshot',
+              data: JSON.stringify(initial),
+            });
+          }
+        } else if (active) {
           await stream.writeSSE({
-            event: 'snapshot',
-            data: JSON.stringify(initial),
+            event: 'presence',
+            data: JSON.stringify({ onlineParticipantIds: hub.getOnlineParticipantIds(slug) }),
           });
         }
-      } else {
-        await stream.writeSSE({
-          event: 'presence',
-          data: JSON.stringify({ onlineParticipantIds: hub.getOnlineParticipantIds(slug) }),
-        });
-      }
 
-      stream.onAbort(() => {
-        active = false;
-        unsubscribe();
-      });
-
-      while (active) {
-        await stream.sleep(20000);
-        if (!active) break;
-        await stream.writeSSE({ event: 'ping', data: 'ok' }).catch(() => {
-          active = false;
-        });
+        while (active) {
+          await stream.sleep(20000);
+          if (!active) break;
+          await stream.writeSSE({ event: 'ping', data: 'ok' }).catch(closeStream);
+        }
+      } finally {
+        closeStream();
       }
-      unsubscribe();
     });
   });
 
@@ -623,6 +703,15 @@ export function createApp(
 
   app.post('/api/plans/:slug/participants/claim', async (c) => {
     const slug = c.req.param('slug');
+    const claimLimit = pinClaimLimiter.check(`${getClientIp(c.req)}:${slug}`);
+    if (!claimLimit.allowed) {
+      c.header('Retry-After', String(claimLimit.retryAfterSeconds));
+      return c.json(
+        { error: 'Demasiados intentos de PIN. Espera unos minutos.' },
+        429
+      );
+    }
+
     const planRow = await store.getPlanAuthRowBySlug(slug);
     if (!planRow) return c.json({ error: 'Quedada no encontrada' }, 404);
 
@@ -1198,59 +1287,81 @@ export function createApp(
 
   // Production static asset serving + Dynamic Open Graph SPA fallback
   if (staticDir && fs.existsSync(staticDir)) {
-    const relRoot = path.relative(process.cwd(), staticDir) || '.';
+    const relRoot = path.relative(process.cwd(), staticDir).replace(/\\/g, '/') || '.';
+    app.use('/assets/*', async (c, next) => {
+      await next();
+      if (c.res.status === 200) {
+        c.header('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    });
     app.use('/assets/*', serveStatic({ root: relRoot }));
     app.use('/favicon.svg', serveStatic({ root: relRoot }));
     app.use('/manifest.webmanifest', serveStatic({ root: relRoot }));
+    app.use('/sw.js', async (c, next) => {
+      await next();
+      c.header('Cache-Control', 'no-cache');
+    });
     app.use('/sw.js', serveStatic({ root: relRoot }));
 
     app.get('*', async (c) => {
-      let indexHtml = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8');
       const reqPath = c.req.path;
+      if (reqPath.startsWith('/api/')) {
+        return c.json({ error: 'Ruta no encontrada' }, 404);
+      }
+      if (reqPath.startsWith('/assets/')) {
+        return c.text('Not found', 404);
+      }
+
+      let indexHtml = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8');
       const match = reqPath.match(/^\/e\/([^/]+)\/?$/);
 
       if (match && match[1]) {
         c.header('X-Robots-Tag', 'noindex, nofollow');
-        const slug = decodeURIComponent(match[1]);
-        try {
-          const snapshot = await store.getPlanSnapshotBySlug(slug);
-          if (snapshot) {
-            const lang = resolveRequestLanguage(c.req);
-            const isEn = lang === 'en';
-            const { plan, participants } = snapshot;
-            const ogTitle = `${plan.emoji} ${plan.title} — Shalendar`;
-            const ogDesc = plan.confirmedDate
-              ? isEn
-                ? `Date confirmed: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` at ${plan.confirmedTime}` : ''}! ${plan.location ? `Location: ${plan.location}.` : ''}`
-                : `¡Fecha confirmada: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
-              : isEn
-                ? `${participants.length} ${participants.length === 1 ? 'person joined' : 'people joined'}${plan.location ? ` · ${plan.location}` : ''}. Open to mark your available days and vote for your favorite.`
-                : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
-            const origin = new URL(c.req.url).origin;
-            const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg${isEn ? '?lang=en' : ''}`;
+        const slug = safeDecodeURIComponent(match[1]);
+        if (slug) {
+          try {
+            const snapshot = await store.getPlanSnapshotBySlug(slug);
+            if (snapshot) {
+              const lang = resolveRequestLanguage(c.req);
+              const isEn = lang === 'en';
+              const { plan, participants } = snapshot;
+              const ogTitle = `${plan.emoji} ${plan.title} — Shalendar`;
+              const ogDesc = plan.confirmedDate
+                ? isEn
+                  ? `Date confirmed: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` at ${plan.confirmedTime}` : ''}! ${plan.location ? `Location: ${plan.location}.` : ''}`
+                  : `¡Fecha confirmada: ${formatDateRange(plan.confirmedDate, plan.confirmedEndDate, lang)}${plan.confirmedTime ? ` a las ${plan.confirmedTime}` : ''}! ${plan.location ? `Lugar: ${plan.location}.` : ''}`
+                : isEn
+                  ? `${participants.length} ${participants.length === 1 ? 'person joined' : 'people joined'}${plan.location ? ` · ${plan.location}` : ''}. Open to mark your available days and vote for your favorite.`
+                  : `${participants.length} ${participants.length === 1 ? 'persona apuntada' : 'personas apuntadas'}${plan.location ? ` · ${plan.location}` : ''}. Entra, marca qué días puedes y vota tu favorito.`;
+              const origin = resolvePublicOrigin(c.req);
+              const ogUrl = `${origin}/e/${encodeURIComponent(slug)}`;
+              const ogImage = `${origin}/api/plans/${encodeURIComponent(slug)}/og.svg${isEn ? '?lang=en' : ''}`;
 
-            const metaInjection = [
-              `<meta property="og:type" content="website" />`,
-              `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}" />`,
-              `<meta property="og:description" content="${escapeHtmlAttr(ogDesc)}" />`,
-              `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
-              `<meta name="twitter:card" content="summary_large_image" />`,
-              `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
-              `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
-              `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
-            ].join('\n    ');
+              const metaInjection = [
+                `<meta property="og:type" content="website" />`,
+                `<meta property="og:url" content="${escapeHtmlAttr(ogUrl)}" />`,
+                `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+                `<meta property="og:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+                `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
+                `<meta name="twitter:card" content="summary_large_image" />`,
+                `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+                `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+                `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
+              ].join('\n    ');
 
-            indexHtml = indexHtml
-              .replace(/<title>.*?<\/title>/, `<title>${escapeHtmlAttr(ogTitle)}</title>`)
-              .replace('</head>', `    ${metaInjection}\n  </head>`);
-          }
-        } catch (err) {
-          if (!(err instanceof PlanExpiredError)) {
-            throw err;
+              indexHtml = indexHtml
+                .replace(/<title>.*?<\/title>/, `<title>${escapeHtmlAttr(ogTitle)}</title>`)
+                .replace('</head>', `    ${metaInjection}\n  </head>`);
+            }
+          } catch (err) {
+            if (!(err instanceof PlanExpiredError)) {
+              throw err;
+            }
           }
         }
       }
 
+      c.header('Cache-Control', 'no-cache');
       return c.html(indexHtml);
     });
   }

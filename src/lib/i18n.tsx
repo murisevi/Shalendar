@@ -97,6 +97,9 @@ export interface Translations {
     createNewPlanBtn: string;
     notFoundTitle: string;
     notFoundDesc: string;
+    loadErrorTitle: string;
+    loadErrorDesc: string;
+    retryBtn: string;
     backHome: string;
     homeTitleTooltip: string;
     expiryBannerBefore: string;
@@ -611,6 +614,10 @@ const ES: Translations = {
     notFoundTitle: 'Quedada no encontrada',
     notFoundDesc:
       'El enlace puede haber cambiado o no existir todavía. Puedes crear un nuevo calendario en segundos.',
+    loadErrorTitle: 'No se pudo conectar',
+    loadErrorDesc:
+      'Hubo un problema temporal al cargar la quedada. Tus datos siguen seguros; inténtalo de nuevo en unos segundos.',
+    retryBtn: 'Reintentar',
     backHome: 'Volver al inicio',
     homeTitleTooltip: 'Inicio',
     expiryBannerBefore: 'Esta quedada se auto-eliminará en ',
@@ -1145,6 +1152,10 @@ const EN: Translations = {
     notFoundTitle: 'Plan not found',
     notFoundDesc:
       'The link may have changed or does not exist yet. You can create a new calendar in seconds.',
+    loadErrorTitle: 'Could not connect',
+    loadErrorDesc:
+      'There was a temporary problem loading this plan. Your data is safe; please try again in a few seconds.',
+    retryBtn: 'Try again',
     backHome: 'Back to home',
     homeTitleTooltip: 'Home',
     expiryBannerBefore: 'This plan will auto-delete in ',

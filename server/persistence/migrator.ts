@@ -11,6 +11,16 @@ export interface MigrationResult {
 const DEFAULT_MIGRATIONS_CANDIDATES = [
   path.resolve(process.cwd(), 'server', 'persistence', 'migrations'),
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'migrations'),
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
+    '..',
+    '..',
+    'server',
+    'persistence',
+    'migrations'
+  ),
 ];
 
 async function resolveMigrationsDir(explicitDir?: string): Promise<string> {

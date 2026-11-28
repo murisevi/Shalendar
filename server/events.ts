@@ -1,6 +1,8 @@
+import type { PlanSnapshot } from '../shared/types.js';
+
 export interface PlanSubscriber {
   participantId: string | null;
-  onUpdate: (onlineParticipantIds: string[]) => void;
+  onUpdate: (onlineParticipantIds: string[], fullSnapshot?: PlanSnapshot) => void;
   onPresence: (onlineParticipantIds: string[]) => void;
 }
 
@@ -53,13 +55,13 @@ export class PlanEventHub {
     }
   }
 
-  notifyUpdate(slug: string): void {
+  notifyUpdate(slug: string, fullSnapshot?: PlanSnapshot): void {
     const set = this.channels.get(slug);
     if (!set) return;
     const online = this.getOnlineParticipantIds(slug);
     for (const sub of set) {
       try {
-        sub.onUpdate(online);
+        sub.onUpdate(online, fullSnapshot);
       } catch {
         // Ignore dead listener
       }

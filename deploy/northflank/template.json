@@ -54,9 +54,7 @@
                   "type": "secret",
                   "secretType": "environment",
                   "secrets": {
-                    "variables": {
-                      "DATABASE_URL": "${POSTGRES_URI}"
-                    }
+                    "variables": {}
                   },
                   "addonDependencies": [
                     {
@@ -64,7 +62,7 @@
                       "keys": [
                         {
                           "keyName": "POSTGRES_URI",
-                          "aliases": ["POSTGRES_URI"]
+                          "aliases": ["DATABASE_URL", "POSTGRES_URI"]
                         }
                       ]
                     }
@@ -137,6 +135,11 @@
                       },
                       {
                         "name": "ALLOW_PUBLIC_DEMO",
+                        "type": "plain",
+                        "value": "true"
+                      },
+                      {
+                        "name": "REQUIRE_POSTGRES",
                         "type": "plain",
                         "value": "true"
                       }

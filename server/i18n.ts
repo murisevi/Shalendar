@@ -90,6 +90,28 @@ const EXACT_EN_ERRORS: Record<string, string> = {
   'Días inválidos': 'Invalid days',
   'Esta quedada ha caducado y fue eliminada automáticamente.':
     'This plan has expired and was automatically deleted.',
+  'Esta quedada caducó y sus datos se eliminaron automáticamente.':
+    'This plan has expired and its data was automatically deleted.',
+  'Demasiados intentos de PIN. Espera unos minutos.':
+    'Too many PIN attempts. Please wait a few minutes.',
+  'Enlace no válido (usa http:// o https://)':
+    'Invalid link (use http:// or https://)',
+  'Solo el organizador puede descargar la copia de seguridad':
+    'Only the organizer can download the backup',
+  'Solo el organizador puede elegir la opción ganadora':
+    'Only the organizer can select the winning option',
+  'Solo el conductor o el organizador puede borrar este coche':
+    'Only the driver or organizer can remove this ride',
+  'El PIN debe tener al menos 4 caracteres':
+    'PIN must be at least 4 characters',
+  'El mes final es anterior al inicial':
+    'End month is before start month',
+  'La fecha final es anterior al inicio o falta la fecha inicial':
+    'End date is before start date or start date is missing',
+  'Opcion no encontrada en esta encuesta':
+    'Option not found in this poll',
+  'Ruta no encontrada':
+    'Route not found',
 };
 
 export function localizeServerError(message: string, lang: Language): string {

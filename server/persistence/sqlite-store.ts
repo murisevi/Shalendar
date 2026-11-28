@@ -70,7 +70,11 @@ export class SqliteShalendarStore implements ShalendarStore {
 
   async getPlanSnapshotBySlug(
     slug: string,
-    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[] }
+    options?: {
+      viewerParticipantId?: string | null;
+      onlineParticipantIds?: string[];
+      includeAllVotes?: boolean;
+    }
   ): Promise<PlanSnapshot | null> {
     return this.db.getPlanSnapshotBySlug(slug, options);
   }

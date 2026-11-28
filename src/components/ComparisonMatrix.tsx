@@ -18,6 +18,7 @@ interface ComparisonMatrixProps {
   rankedDates: DaySummary[];
   confirmedDate: string | null;
   selectedDate: string | null;
+  votingOpen?: boolean;
   blindVotingHidden?: boolean;
   onSelectDate: (date: string) => void;
   onToggleVote: (date: string) => void;
@@ -36,6 +37,7 @@ export function ComparisonMatrix({
   rankedDates,
   confirmedDate,
   selectedDate,
+  votingOpen = true,
   blindVotingHidden = false,
   onSelectDate,
   onToggleVote,
@@ -245,8 +247,9 @@ export function ComparisonMatrix({
                       </div>
                       <button
                         type="button"
+                        disabled={!votingOpen}
                         onClick={() => onToggleVote(col.date)}
-                        className={`inline-flex items-center justify-center gap-0.5 rounded-lg border px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                        className={`inline-flex items-center justify-center gap-0.5 rounded-lg border px-2 py-0.5 text-[11px] font-bold transition cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
                           voted
                             ? 'border-amber-400 bg-amber-400 text-amber-950'
                             : 'border-stone-200 dark:border-slate-700 text-stone-500 hover:border-amber-400 hover:text-amber-600'

@@ -60,11 +60,13 @@
   animation: popIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Prevent text selection during drag-painting on calendar */
-.calendar-no-select {
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: pan-y;
+/* Prevent text selection during drag-painting on calendar.
+   Keep inside @layer components so Tailwind's touch-none / touch-pan-y utilities win. */
+@layer components {
+  .calendar-no-select {
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }
 
 /* ---------- Mobile shell ---------- */

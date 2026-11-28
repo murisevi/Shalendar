@@ -22,10 +22,12 @@ async function main() {
 
   let store: ShalendarStore;
   let purgeHandle: PurgeSchedulerHandle | null = null;
+  let persistentStorage = false;
 
   if (config.databaseUrl) {
     const pgStore = await PostgresShalendarStore.connect(config);
     store = pgStore;
+    persistentStorage = true;
     purgeHandle = startPurgeScheduler(pgStore.getPool(), {
       intervalHours: config.purgeIntervalHours,
     });
@@ -36,6 +38,12 @@ async function main() {
     if (config.unresolvedDatabaseUrlVars && config.unresolvedDatabaseUrlVars.length > 0) {
       console.warn(
         `⚠️  Se detectaron variables de PostgreSQL sin resolver (${config.unresolvedDatabaseUrlVars.join(', ')}). Revisa el enlace con el addon o Secret Group en tu PaaS.`
+      );
+    }
+
+    if (config.requirePostgres) {
+      throw new Error(
+        'REQUIRE_POSTGRES está activado pero no se encontró DATABASE_URL/POSTGRES_URI válida. Abortando arranque para evitar guardar datos en almacenamiento efímero.'
       );
     }
 
@@ -54,7 +62,12 @@ async function main() {
       );
     }
 
-    const sqliteDb = new ShalendarDB(sqliteTarget.dbPath);
+    persistentStorage = !config.isProduction && !sqliteTarget.usedFallback;
+    const sqliteDb = new ShalendarDB(sqliteTarget.dbPath, {
+      defaultRetentionPolicy: config.defaultRetentionPolicy,
+      defaultRetentionDays: config.defaultRetentionDays,
+      postEventGraceDays: config.postEventGraceDays,
+    });
     store = new SqliteShalendarStore(sqliteDb);
     console.log(
       `💾 Shalendar usando SQLite local en ${sqliteTarget.dbPath} (define DATABASE_URL o POSTGRES_URI para PostgreSQL)`
@@ -68,6 +81,7 @@ async function main() {
   const hub = new PlanEventHub();
   const app = createApp(store, hub, STATIC_DIR, {
     purgeCronSecret: config.purgeCronSecret,
+    persistentStorage,
   });
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, (info) => {

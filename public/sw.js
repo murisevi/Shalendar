@@ -1,5 +1,5 @@
-const CACHE_NAME = 'shalendar-v2';
-const STATIC_ASSETS = ['/', '/favicon.svg', '/manifest.webmanifest'];
+const CACHE_NAME = 'shalendar-v3';
+const STATIC_ASSETS = ['/favicon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -22,38 +22,26 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  // Never intercept SSE streams
-  if (url.pathname.endsWith('/stream')) return;
+  if (url.origin !== self.location.origin) return;
 
-  // Network-first for API JSON (caches last known snapshot for offline reading!)
-  if (url.pathname.startsWith('/api/plans/')) {
-    event.respondWith(
-      fetch(request)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
-          }
-          return res;
-        })
-        .catch(() => caches.match(request))
-    );
-    return;
-  }
+  // Never intercept or cache API calls, SSE streams, auth sessions, or backups
+  if (url.pathname.startsWith('/api/')) return;
 
-  // Network-first for navigation requests with offline fallback to cached shell
+  // Network-first for HTML navigations so new deployments load immediately
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request).catch(() => caches.match('/'))
-    );
+    event.respondWith(fetch(request));
     return;
   }
 
-  // Stale-while-revalidate for static assets
-  if (url.origin === self.location.origin) {
+  // Stale-while-revalidate only for versioned static assets and icons
+  if (
+    url.pathname.startsWith('/assets/') ||
+    url.pathname === '/favicon.svg' ||
+    url.pathname === '/manifest.webmanifest'
+  ) {
     event.respondWith(
       caches.match(request).then((cached) => {
-        const fetched = fetch(request)
+        const networkFetch = fetch(request)
           .then((res) => {
             if (res.ok) {
               const copy = res.clone();
@@ -61,8 +49,8 @@ self.addEventListener('fetch', (event) => {
             }
             return res;
           })
-          .catch(() => cached);
-        return cached || fetched;
+          .catch(() => cached ?? Response.error());
+        return cached || networkFetch;
       })
     );
   }

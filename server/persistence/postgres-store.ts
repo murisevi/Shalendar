@@ -34,6 +34,7 @@ import {
 import {
   computeExpiresAt,
   isPlanExpired,
+  pickLaterExpiration,
   type ExportedPlanBackup,
   type PlanSummaryItem,
 } from '../../shared/persistence.js';
@@ -127,6 +128,11 @@ export class PostgresShalendarStore implements ShalendarStore {
     migrationsDir?: string
   ): Promise<PostgresShalendarStore> {
     const pool = new Pool(buildPgPoolOptions(config));
+    // Prevent unhandled 'error' events on idle clients (e.g. Postgres restart / Neon scale-to-zero)
+    // from crashing the entire Node.js process.
+    pool.on('error', (err) => {
+      console.error('[shalendar:pg-pool] Error inesperado en cliente inactivo de PostgreSQL:', err);
+    });
     await runMigrations(pool, migrationsDir);
     return new PostgresShalendarStore(pool, config);
   }
@@ -202,7 +208,7 @@ export class PostgresShalendarStore implements ShalendarStore {
   private async touchPlanActivity(planId: string, client?: PgQueryClient): Promise<void> {
     const runner = client ?? this.pool;
     const res = await runner.query(
-      'SELECT is_demo, retention_policy, retention_days, confirmed_date, confirmed_end_date FROM plans WHERE id = $1',
+      'SELECT is_demo, retention_policy, retention_days, confirmed_date, confirmed_end_date, expires_at FROM plans WHERE id = $1',
       [planId]
     );
     const row = res.rows[0];
@@ -213,9 +219,10 @@ export class PostgresShalendarStore implements ShalendarStore {
     const retentionDays = Number(row.retention_days ?? this.config.defaultRetentionDays);
     const confirmedDate = row.confirmed_date ? String(row.confirmed_date) : null;
     const confirmedEndDate = row.confirmed_end_date ? String(row.confirmed_end_date) : null;
+    const currentExpiresAt = toIsoOrNull(row.expires_at);
 
     if (policy === 'sliding_inactivity' || (policy === 'ephemeral_after_event' && !confirmedDate)) {
-      const nextExpiresAt = computeExpiresAt({
+      const candidateExpiresAt = computeExpiresAt({
         policy,
         retentionDays,
         now,
@@ -223,6 +230,7 @@ export class PostgresShalendarStore implements ShalendarStore {
         confirmedEndDate,
         postEventGraceDays: this.config.postEventGraceDays,
       });
+      const nextExpiresAt = pickLaterExpiration(currentExpiresAt, candidateExpiresAt);
       await runner.query(
         'UPDATE plans SET last_activity_at = $1::timestamptz, expires_at = $2::timestamptz WHERE id = $3',
         [now.toISOString(), nextExpiresAt, planId]
@@ -753,16 +761,26 @@ export class PostgresShalendarStore implements ShalendarStore {
     const pinHash = input.pin && input.pin.trim().length >= 4 ? hashPin(id, input.pin) : null;
     const createdAt = new Date().toISOString();
 
-    const inserted = await this.pool.query(
-      `
-        INSERT INTO participants (
-          id, plan_id, name, avatar_color, avatar_emoji, is_organizer,
-          participant_token, pin_hash, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)
-        RETURNING *
-      `,
-      [id, planId, cleanName, color, emoji, Boolean(input.isOrganizer), participantToken, pinHash, createdAt]
-    );
+    let inserted;
+    try {
+      inserted = await this.pool.query(
+        `
+          INSERT INTO participants (
+            id, plan_id, name, avatar_color, avatar_emoji, is_organizer,
+            participant_token, pin_hash, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)
+          RETURNING *
+        `,
+        [id, planId, cleanName, color, emoji, Boolean(input.isOrganizer), participantToken, pinHash, createdAt]
+      );
+    } catch (err) {
+      if ((err as { code?: string })?.code === '23505') {
+        throw new Error(
+          `Ya hay alguien apuntado como «${cleanName}». Usa otro nombre o recupera tu perfil con PIN.`
+        );
+      }
+      throw err;
+    }
     await this.touchPlanActivity(planId);
 
     return {
@@ -919,53 +937,53 @@ export class PostgresShalendarStore implements ShalendarStore {
   }
 
   async toggleVote(planId: string, participantId: string, date: string): Promise<{ voted: boolean }> {
-    const planRes = await this.pool.query(
-      'SELECT voting_open, voting_deadline, max_votes_per_user FROM plans WHERE id = $1',
-      [planId]
-    );
-    const planRow = planRes.rows[0];
-    if (!planRow) throw new Error('Quedada no encontrada');
+    return withTransaction(this.pool, async (client) => {
+      const planRes = await client.query(
+        'SELECT voting_open, voting_deadline, max_votes_per_user FROM plans WHERE id = $1',
+        [planId]
+      );
+      const planRow = planRes.rows[0];
+      if (!planRow) throw new Error('Quedada no encontrada');
 
-    const isOpen = isVotingEffectivelyOpen({
-      votingOpen: Boolean(planRow.voting_open),
-      votingDeadline: toIsoOrNull(planRow.voting_deadline),
-    });
-    if (!isOpen) throw new Error('La votación está cerrada');
+      const isOpen = isVotingEffectivelyOpen({
+        votingOpen: Boolean(planRow.voting_open),
+        votingDeadline: toIsoOrNull(planRow.voting_deadline),
+      });
+      if (!isOpen) throw new Error('La votación está cerrada');
 
-    const partRes = await this.pool.query(
-      'SELECT id FROM participants WHERE id = $1 AND plan_id = $2',
-      [participantId, planId]
-    );
-    if (partRes.rows.length === 0) throw new Error('Participante no encontrado');
+      const partRes = await client.query(
+        'SELECT id FROM participants WHERE id = $1 AND plan_id = $2 FOR UPDATE',
+        [participantId, planId]
+      );
+      if (partRes.rows.length === 0) throw new Error('Participante no encontrado');
 
-    const existing = await this.pool.query(
-      'SELECT 1 FROM votes WHERE plan_id = $1 AND participant_id = $2 AND date = $3',
-      [planId, participantId, date]
-    );
-    if (existing.rows.length > 0) {
-      await this.pool.query(
-        'DELETE FROM votes WHERE plan_id = $1 AND participant_id = $2 AND date = $3',
+      const existing = await client.query(
+        'SELECT 1 FROM votes WHERE plan_id = $1 AND participant_id = $2 AND date = $3',
         [planId, participantId, date]
       );
-      await this.touchPlanActivity(planId);
-      return { voted: false };
-    }
-
-    const maxVotes = Number(planRow.max_votes_per_user ?? 3);
-    if (maxVotes > 0) {
-      const countRes = await this.pool.query(
-        'SELECT COUNT(*) AS c FROM votes WHERE plan_id = $1 AND participant_id = $2',
-        [planId, participantId]
-      );
-      if (Number(countRes.rows[0]?.c ?? 0) >= maxVotes) {
-        throw new Error(
-          `Has alcanzado el máximo de ${maxVotes} ${maxVotes === 1 ? 'voto' : 'votos'}. Quita uno para votar otro día.`
+      if (existing.rows.length > 0) {
+        await client.query(
+          'DELETE FROM votes WHERE plan_id = $1 AND participant_id = $2 AND date = $3',
+          [planId, participantId, date]
         );
+        await this.touchPlanActivity(planId, client);
+        return { voted: false };
       }
-    }
 
-    const now = new Date().toISOString();
-    await withTransaction(this.pool, async (client) => {
+      const maxVotes = Number(planRow.max_votes_per_user ?? 3);
+      if (maxVotes > 0) {
+        const countRes = await client.query(
+          'SELECT COUNT(*) AS c FROM votes WHERE plan_id = $1 AND participant_id = $2',
+          [planId, participantId]
+        );
+        if (Number(countRes.rows[0]?.c ?? 0) >= maxVotes) {
+          throw new Error(
+            `Has alcanzado el máximo de ${maxVotes} ${maxVotes === 1 ? 'voto' : 'votos'}. Quita uno para votar otro día.`
+          );
+        }
+      }
+
+      const now = new Date().toISOString();
       await client.query(
         `
           INSERT INTO poll_options (plan_id, date, label, proposed_by, created_at)
@@ -975,13 +993,16 @@ export class PostgresShalendarStore implements ShalendarStore {
         [planId, date, participantId, now]
       );
       await client.query(
-        'INSERT INTO votes (plan_id, participant_id, date, created_at) VALUES ($1, $2, $3, $4::timestamptz)',
+        `
+          INSERT INTO votes (plan_id, participant_id, date, created_at)
+          VALUES ($1, $2, $3, $4::timestamptz)
+          ON CONFLICT (plan_id, participant_id, date) DO NOTHING
+        `,
         [planId, participantId, date, now]
       );
       await this.touchPlanActivity(planId, client);
+      return { voted: true };
     });
-
-    return { voted: true };
   }
 
   async addComment(
@@ -1102,31 +1123,43 @@ export class PostgresShalendarStore implements ShalendarStore {
     optionId: string,
     participantId: string
   ): Promise<{ voted: boolean }> {
-    const opt = await this.pool.query(
-      'SELECT id FROM sub_poll_options WHERE id = $1 AND poll_id = $2 AND plan_id = $3',
-      [optionId, pollId, planId]
-    );
-    if (opt.rows.length === 0) throw new Error('Opción no encontrada');
+    return withTransaction(this.pool, async (client) => {
+      const opt = await client.query(
+        'SELECT id FROM sub_poll_options WHERE id = $1 AND poll_id = $2 AND plan_id = $3',
+        [optionId, pollId, planId]
+      );
+      if (opt.rows.length === 0) throw new Error('Opción no encontrada');
 
-    const existing = await this.pool.query(
-      'SELECT 1 FROM sub_poll_votes WHERE poll_id = $1 AND option_id = $2 AND participant_id = $3',
-      [pollId, optionId, participantId]
-    );
-    if (existing.rows.length > 0) {
-      await this.pool.query(
-        'DELETE FROM sub_poll_votes WHERE poll_id = $1 AND option_id = $2 AND participant_id = $3',
+      const part = await client.query(
+        'SELECT id FROM participants WHERE id = $1 AND plan_id = $2 FOR UPDATE',
+        [participantId, planId]
+      );
+      if (part.rows.length === 0) throw new Error('Participante no encontrado');
+
+      const existing = await client.query(
+        'SELECT 1 FROM sub_poll_votes WHERE poll_id = $1 AND option_id = $2 AND participant_id = $3',
         [pollId, optionId, participantId]
       );
-      await this.touchPlanActivity(planId);
-      return { voted: false };
-    }
+      if (existing.rows.length > 0) {
+        await client.query(
+          'DELETE FROM sub_poll_votes WHERE poll_id = $1 AND option_id = $2 AND participant_id = $3',
+          [pollId, optionId, participantId]
+        );
+        await this.touchPlanActivity(planId, client);
+        return { voted: false };
+      }
 
-    await this.pool.query(
-      'INSERT INTO sub_poll_votes (plan_id, poll_id, option_id, participant_id, created_at) VALUES ($1, $2, $3, $4, $5::timestamptz)',
-      [planId, pollId, optionId, participantId, new Date().toISOString()]
-    );
-    await this.touchPlanActivity(planId);
-    return { voted: true };
+      await client.query(
+        `
+          INSERT INTO sub_poll_votes (plan_id, poll_id, option_id, participant_id, created_at)
+          VALUES ($1, $2, $3, $4, $5::timestamptz)
+          ON CONFLICT (poll_id, option_id, participant_id) DO NOTHING
+        `,
+        [planId, pollId, optionId, participantId, new Date().toISOString()]
+      );
+      await this.touchPlanActivity(planId, client);
+      return { voted: true };
+    });
   }
 
   async setSubPollWinner(
@@ -1250,43 +1283,49 @@ export class PostgresShalendarStore implements ShalendarStore {
     rideId: string,
     participantId: string
   ): Promise<{ joined: boolean }> {
-    const rideRes = await this.pool.query(
-      'SELECT driver_id, seats_total FROM carpool_rides WHERE id = $1 AND plan_id = $2',
-      [rideId, planId]
-    );
-    const ride = rideRes.rows[0];
-    if (!ride) throw new Error('Coche no encontrado');
-    if (String(ride.driver_id) === participantId) {
-      throw new Error('Ya eres el conductor de este coche.');
-    }
+    return withTransaction(this.pool, async (client) => {
+      const rideRes = await client.query(
+        'SELECT driver_id, seats_total FROM carpool_rides WHERE id = $1 AND plan_id = $2 FOR UPDATE',
+        [rideId, planId]
+      );
+      const ride = rideRes.rows[0];
+      if (!ride) throw new Error('Coche no encontrado');
+      if (String(ride.driver_id) === participantId) {
+        throw new Error('Ya eres el conductor de este coche.');
+      }
 
-    const existing = await this.pool.query(
-      'SELECT 1 FROM carpool_passengers WHERE ride_id = $1 AND participant_id = $2',
-      [rideId, participantId]
-    );
-    if (existing.rows.length > 0) {
-      await this.pool.query(
-        'DELETE FROM carpool_passengers WHERE ride_id = $1 AND participant_id = $2',
+      const existing = await client.query(
+        'SELECT 1 FROM carpool_passengers WHERE ride_id = $1 AND participant_id = $2',
         [rideId, participantId]
       );
-      await this.touchPlanActivity(planId);
-      return { joined: false };
-    }
+      if (existing.rows.length > 0) {
+        await client.query(
+          'DELETE FROM carpool_passengers WHERE ride_id = $1 AND participant_id = $2',
+          [rideId, participantId]
+        );
+        await this.touchPlanActivity(planId, client);
+        return { joined: false };
+      }
 
-    const countRes = await this.pool.query(
-      'SELECT COUNT(*) AS c FROM carpool_passengers WHERE ride_id = $1',
-      [rideId]
-    );
-    if (Number(countRes.rows[0]?.c ?? 0) >= Number(ride.seats_total ?? 1)) {
-      throw new Error('Este coche ya está completo.');
-    }
+      const countRes = await client.query(
+        'SELECT COUNT(*) AS c FROM carpool_passengers WHERE ride_id = $1',
+        [rideId]
+      );
+      if (Number(countRes.rows[0]?.c ?? 0) >= Number(ride.seats_total ?? 1)) {
+        throw new Error('Este coche ya está completo.');
+      }
 
-    await this.pool.query(
-      'INSERT INTO carpool_passengers (plan_id, ride_id, participant_id, created_at) VALUES ($1, $2, $3, $4::timestamptz)',
-      [planId, rideId, participantId, new Date().toISOString()]
-    );
-    await this.touchPlanActivity(planId);
-    return { joined: true };
+      await client.query(
+        `
+          INSERT INTO carpool_passengers (plan_id, ride_id, participant_id, created_at)
+          VALUES ($1, $2, $3, $4::timestamptz)
+          ON CONFLICT (ride_id, participant_id) DO NOTHING
+        `,
+        [planId, rideId, participantId, new Date().toISOString()]
+      );
+      await this.touchPlanActivity(planId, client);
+      return { joined: true };
+    });
   }
 
   async deleteCarpoolRide(planId: string, rideId: string): Promise<void> {
@@ -1387,20 +1426,39 @@ export class PostgresShalendarStore implements ShalendarStore {
       updates.retentionDays !== undefined ||
       updates.confirmedDate !== undefined ||
       updates.confirmedEndDate !== undefined;
+    const switchedToFixedTtl =
+      nextRetentionPolicy === 'fixed_ttl' &&
+      (updates.retentionPolicy !== undefined || updates.retentionDays !== undefined);
+    const existingExpiresAt = toIsoOrNull(row.expires_at);
 
-    const nextExpiresAt = isDemo
-      ? null
-      : retentionChanged || nextRetentionPolicy === 'sliding_inactivity'
-        ? computeExpiresAt({
-            policy: nextRetentionPolicy,
-            retentionDays: nextRetentionDays,
-            now,
-            createdAt: new Date(toIso(row.created_at)),
-            confirmedDate: nextConfirmedDate,
-            confirmedEndDate: nextConfirmedEndDate,
-            postEventGraceDays: this.config.postEventGraceDays,
-          })
-        : toIsoOrNull(row.expires_at);
+    let nextExpiresAt: string | null;
+    if (isDemo) {
+      nextExpiresAt = null;
+    } else if (retentionChanged) {
+      nextExpiresAt = computeExpiresAt({
+        policy: nextRetentionPolicy,
+        retentionDays: nextRetentionDays,
+        now,
+        // Anchor newly chosen fixed_ttl from now so switching an older plan never deletes it immediately
+        createdAt: switchedToFixedTtl ? now : new Date(toIso(row.created_at)),
+        confirmedDate: nextConfirmedDate,
+        confirmedEndDate: nextConfirmedEndDate,
+        postEventGraceDays: this.config.postEventGraceDays,
+      });
+    } else if (nextRetentionPolicy === 'sliding_inactivity') {
+      const candidate = computeExpiresAt({
+        policy: nextRetentionPolicy,
+        retentionDays: nextRetentionDays,
+        now,
+        createdAt: new Date(toIso(row.created_at)),
+        confirmedDate: nextConfirmedDate,
+        confirmedEndDate: nextConfirmedEndDate,
+        postEventGraceDays: this.config.postEventGraceDays,
+      });
+      nextExpiresAt = pickLaterExpiration(existingExpiresAt, candidate);
+    } else {
+      nextExpiresAt = existingExpiresAt;
+    }
 
     const updatedRes = await this.pool.query(
       `
@@ -1505,21 +1563,28 @@ export class PostgresShalendarStore implements ShalendarStore {
     const startMonth = formatMonthISO(now.getFullYear(), now.getMonth());
     const endMonth = addMonthsISO(startMonth, 2);
 
-    const { plan, participant: lucia } = await this.createPlan({
-      title: 'Cena y sobremesa del grupo',
-      description:
-        '¡Hace mil que no nos juntamos todos! Apuntad qué días os vienen bien, votad vuestro favorito y decidimos restaurante.',
-      location: 'La Taberna del Parque · Centro',
-      emoji: '🍕',
-      organizerName: 'Lucía',
-      organizerColor: '#0D9488',
-      organizerEmoji: '🦊',
-      startMonth,
-      endMonth,
-      maxVotesPerUser: 3,
-      customSlug: 'cena-reencuentro',
-      isDemo: true,
-    });
+    let createdDemo: { plan: Plan; participant: Participant };
+    try {
+      createdDemo = await this.createPlan({
+        title: 'Cena y sobremesa del grupo',
+        description:
+          '¡Hace mil que no nos juntamos todos! Apuntad qué días os vienen bien, votad vuestro favorito y decidimos restaurante.',
+        location: 'La Taberna del Parque · Centro',
+        emoji: '🍕',
+        organizerName: 'Lucía',
+        organizerColor: '#0D9488',
+        organizerEmoji: '🦊',
+        startMonth,
+        endMonth,
+        maxVotesPerUser: 3,
+        customSlug: 'cena-reencuentro',
+        isDemo: true,
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === '23505') return;
+      throw err;
+    }
+    const { plan, participant: lucia } = createdDemo;
 
     const carlos = (
       await this.addOrGetParticipant(plan.id, {

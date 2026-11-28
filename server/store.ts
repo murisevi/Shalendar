@@ -104,7 +104,11 @@ export interface ShalendarStore {
 
   getPlanSnapshotBySlug(
     slug: string,
-    options?: { viewerParticipantId?: string | null; onlineParticipantIds?: string[] }
+    options?: {
+      viewerParticipantId?: string | null;
+      onlineParticipantIds?: string[];
+      includeAllVotes?: boolean;
+    }
   ): Promise<PlanSnapshot | null>;
   listPublicPlans(limit?: number): Promise<PlanSummaryItem[]>;
   lookupPlansBySlugs(slugs: string[]): Promise<PlanSummaryItem[]>;

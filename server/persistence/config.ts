@@ -33,6 +33,7 @@ export interface PersistenceConfig {
   purgeIntervalHours: number;
   purgeCronSecret: string | null;
   allowPublicDemo: boolean;
+  requirePostgres: boolean;
   isProduction: boolean;
 }
 
@@ -118,6 +119,9 @@ export function loadPersistenceConfig(
     purgeIntervalHours: parseIntEnv(env.PURGE_INTERVAL_HOURS, 12, 0, 168),
     purgeCronSecret: env.PURGE_CRON_SECRET?.trim() || null,
     allowPublicDemo: (env.ALLOW_PUBLIC_DEMO ?? 'true').trim().toLowerCase() !== 'false',
+    requirePostgres:
+      (env.REQUIRE_POSTGRES ?? 'false').trim().toLowerCase() === 'true' ||
+      (env.REQUIRE_POSTGRES ?? '').trim() === '1',
     isProduction,
   };
 }
